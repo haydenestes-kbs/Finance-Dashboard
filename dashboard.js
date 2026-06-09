@@ -19,6 +19,10 @@ try {
 
 let REVIEWER = 'Reviewer';   // set from the signed-in user's email after login
 
+// Department scoping. Resolved after login from shared.visible_departments().
+let visibleDepts = [];       // every department code the signed-in user may see
+let homeDept = null;         // the department new rows are written under
+
 // =============================================================
 // STATIC STRUCTURE (not sensitive): month layout + Hayden's terms.
 // The actual dollar figures load from Supabase after login.
@@ -162,7 +166,9 @@ function setConn(ok, label){
 
 // Load the Jan–May actuals from Supabase and rebuild lineItems + Hayden lines.
 async function loadActuals(){
-  const { data, error } = await sb.from('actuals').select('*').order('sort_order',{ascending:true});
+  const { data, error } = await sb.from('actuals').select('*')
+    .in('department', visibleDepts)
+    .order('sort_order',{ascending:true});
   if (error) throw error;
   lineItems = (data||[]).map(r=>({
     id:r.id, label:r.label, cat:r.cat, vendor:r.vendor,
@@ -176,25 +182,64 @@ async function loadActuals(){
   buildHaydenLines();
 }
 
+// Resolve which department codes this user may see, via the shared helper.
+// Falls back to 3020 (finance) if the lookup returns nothing, so the existing
+// finance dashboard keeps working. Uses a REST fallback for the user_access
+// lookup so it works regardless of supabase-js .schema() support.
+async function resolveDepartments(email){
+  visibleDepts = [];
+  homeDept = null;
+  try {
+    const { data: vis, error: vErr } = await sb.rpc('visible_departments');
+    if (vErr) throw vErr;
+    visibleDepts = (vis || []).map(r => r.department);
+  } catch(e){ console.warn('visible_departments failed', e); }
+  // home department (where new rows are written): read the user's access row.
+  try {
+    let acc = null;
+    if (typeof sb.schema === 'function') {
+      const { data } = await sb.schema('shared').from('user_access')
+        .select('department, is_admin').eq('email', email.toLowerCase()).maybeSingle();
+      acc = data;
+    } else {
+      // REST fallback for older supabase-js without .schema()
+      const resp = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_access?email=eq.${encodeURIComponent(email.toLowerCase())}&select=department,is_admin`,
+        { headers: { apikey: SUPABASE_ANON_KEY,
+                     Authorization: `Bearer ${(await sb.auth.getSession()).data.session.access_token}`,
+                     'Accept-Profile': 'shared' } });
+      const rows = await resp.json();
+      acc = Array.isArray(rows) && rows.length ? rows[0] : null;
+    }
+    if (acc) homeDept = acc.is_admin ? '3020' : acc.department;
+  } catch(e){ console.warn('user_access lookup failed', e); }
+  if (!visibleDepts.length) visibleDepts = ['3020'];
+  if (!homeDept) homeDept = '3020';
+}
+
 async function loadAll(){
   // actuals first (everything else depends on them)
   await loadActuals();
   // requisitions (must exist before forecast defaults are built)
   try {
-    const { data: reqRows } = await sb.from('requisitions').select('*').order('created_at',{ascending:true});
+    const { data: reqRows } = await sb.from('requisitions').select('*')
+      .in('department', visibleDepts).order('created_at',{ascending:true});
     reqs = reqRows || [];
   } catch(e){ reqs = []; }
   buildReqLines();
   // custom lines (also must exist before forecast defaults)
   try {
-    const { data: clRows } = await sb.from('custom_lines').select('*').order('created_at',{ascending:true});
+    const { data: clRows } = await sb.from('custom_lines').select('*')
+      .in('department', visibleDepts).order('created_at',{ascending:true});
     customLines = (clRows||[]).map(r=>({ id:r.id, label:r.label, section:r.cat, cat:SECTION_DEFAULT_CAT[r.cat]||'other', custom:true }));
   } catch(e){ customLines = []; }
   // forecast
-  const { data: fcRow } = await sb.from('forecast').select('data').eq('reviewer','ben').maybeSingle();
+  const { data: fcRow } = await sb.from('forecast').select('data')
+    .eq('department', homeDept).maybeSingle();
   forecastState = { ...buildDefaultForecast(), ...(fcRow && fcRow.data ? fcRow.data : {}) };
   // comments
-  const { data: cmts } = await sb.from('comments').select('*').order('created_at',{ascending:true});
+  const { data: cmts } = await sb.from('comments').select('*')
+    .in('department', visibleDepts).order('created_at',{ascending:true});
   commentsState = {};
   (cmts||[]).forEach(c=>{
     (commentsState[c.cell_key] = commentsState[c.cell_key] || []).push(
@@ -206,8 +251,8 @@ async function loadAll(){
 async function saveForecastCloud(){
   try {
     await sb.from('forecast').upsert(
-      { reviewer:'ben', data:forecastState, updated_at:new Date().toISOString() },
-      { onConflict:'reviewer' });
+      { department:homeDept, reviewer:REVIEWER, data:forecastState, updated_at:new Date().toISOString() },
+      { onConflict:'department' });
   } catch(e){ console.warn('forecast save failed', e); toast('Save failed — check connection', true); }
 }
 
@@ -215,7 +260,7 @@ async function addCommentCloud(cellKey, body){
   const entry = { author:REVIEWER, text:body, ts:new Date().toISOString() };
   try {
     const { data, error } = await sb.from('comments')
-      .insert({ cell_key:cellKey, author:REVIEWER, body }).select().single();
+      .insert({ cell_key:cellKey, author:REVIEWER, body, department:homeDept }).select().single();
     if (error) throw error;
     if (data) entry.id = data.id;
     (commentsState[cellKey] = commentsState[cellKey] || []).push(entry);
@@ -893,7 +938,7 @@ async function submitReq(){
   btn.disabled = true; btn.textContent = 'Adding…';
   try {
     const { data, error } = await sb.from('requisitions')
-      .insert({ title, reports_to:reports||null, salary_low:low, salary_high:high, bonus_pct:bonus, start_date:start })
+      .insert({ title, reports_to:reports||null, salary_low:low, salary_high:high, bonus_pct:bonus, start_date:start, department:homeDept })
       .select().single();
     if (error) throw error;
     reqs.push(data);
@@ -943,7 +988,7 @@ async function openAddLine(sectionKey){
 
   const id = `custom_${sectionKey}_${Date.now()}`;
   try {
-    const { error } = await sb.from('custom_lines').insert({ id, label, cat:sectionKey });
+    const { error } = await sb.from('custom_lines').insert({ id, label, cat:sectionKey, department:homeDept });
     if (error) throw error;
   } catch(e){ console.warn('custom line save failed', e); toast('Could not add line — check connection', true); return; }
 
@@ -1043,6 +1088,7 @@ async function enterApp(session){
   const email = session?.user?.email || 'user';
   const namePart = email.split('@')[0];
   REVIEWER = namePart.charAt(0).toUpperCase() + namePart.slice(1); // e.g. "Ben"
+  await resolveDepartments(email);
   document.getElementById('topbarUser').textContent = email;
   document.getElementById('topbarAvatar').textContent = namePart.slice(0,2).toUpperCase();
   document.getElementById('loginScreen').style.display = 'none';
