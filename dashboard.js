@@ -506,7 +506,7 @@ function renderForecastTable(){
   let bodyRows = '';
   getForecastRows().forEach(row=>{
     if (typeof row === 'object'){
-      const addBtn = row.key ? `<button class="sec-add" title="Add a line to ${escapeHtml(row.section)}" onclick="openAddLine('${row.key}')">+</button>` : '';
+      const addBtn = row.key ? `<button class="sec-add" title="Add a line to ${escapeHtml(row.section)}" onclick="openAddLine('${row.key}')">+ Add line</button>` : '';
       bodyRows += `<tr class="row-section"><td colspan="14"><div class="sec-wrap"><span class="sec-label">${row.section}</span>${addBtn}</div></td></tr>`;
       return;
     }
