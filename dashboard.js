@@ -12,7 +12,7 @@ let sb = null;
 let CONFIGURED = false;
 try {
   if (SUPABASE_URL && !SUPABASE_URL.startsWith('YOUR_') && window.supabase) {
-    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { db: { schema: 'finance' } });
     CONFIGURED = true;
   }
 } catch (e) { console.warn('Supabase init failed', e); }
