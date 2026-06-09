@@ -5,7 +5,7 @@
 // -------------------------------------------------------------
 // SUPABASE CONFIG  ← fill these in (see DEPLOYMENT_GUIDE.md)
 // -------------------------------------------------------------
-const SUPABASE_URL = 'https://qlrjughdnauodapvubvq.supabase.co/rest/v1/';
+const SUPABASE_URL = 'https://qlrjughdnauodapvubvq.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFscmp1Z2hkbmF1b2RhcHZ1YnZxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwMjIzMjUsImV4cCI6MjA5NjU5ODMyNX0.b72XbKUJf4LA4EtEtI4d9FnsTifd2ow0crhRWoahaPY';
 
 let sb = null;
@@ -83,6 +83,21 @@ function buildReqLines(){
 }
 
 // =============================================================
+// CUSTOM LINES — extra rows Ben adds to a section (blank editable cells)
+// =============================================================
+let customLines = [];   // [{id,label,cat}]
+
+// section key -> forecast line categories it contains, + display label
+const SECTIONS = [
+  { key:'wages',   label:'Employee Wages & Benefits', cats:['payroll','benefits'] },
+  { key:'vendors', label:'External Vendors',          cats:['service','prof'] },
+  { key:'te',      label:'Travel & Entertainment',    cats:['te'] },
+  { key:'other',   label:'Other Expenses',            cats:['other'] },
+];
+// which category a custom line gets, by section (first cat of the section)
+const SECTION_DEFAULT_CAT = { wages:'payroll', vendors:'service', te:'te', other:'other' };
+
+// =============================================================
 // CATEGORY BUDGETS (derived from YTD actuals as the baseline)
 // Monthly budget = YTD-actual average per line. Forecast defaults to it.
 // =============================================================
@@ -125,6 +140,10 @@ function buildDefaultForecast(){
     // zero before start month and across all actuals; monthly amount from start month → Dec
     fc[l.id] = months.map((m,i)=> (i<ACTUAL_MONTHS || i<l.startIdx) ? 0 : l.monthly);
   });
+  customLines.forEach(l => {
+    // blank line — all zeros; Ben types the forecast months himself
+    fc[l.id] = months.map(()=> 0);
+  });
   return fc;
 }
 
@@ -166,6 +185,11 @@ async function loadAll(){
     reqs = reqRows || [];
   } catch(e){ reqs = []; }
   buildReqLines();
+  // custom lines (also must exist before forecast defaults)
+  try {
+    const { data: clRows } = await sb.from('custom_lines').select('*').order('created_at',{ascending:true});
+    customLines = (clRows||[]).map(r=>({ id:r.id, label:r.label, section:r.cat, cat:SECTION_DEFAULT_CAT[r.cat]||'other', custom:true }));
+  } catch(e){ customLines = []; }
   // forecast
   const { data: fcRow } = await sb.from('forecast').select('data').eq('reviewer','ben').maybeSingle();
   forecastState = { ...buildDefaultForecast(), ...(fcRow && fcRow.data ? fcRow.data : {}) };
@@ -441,25 +465,30 @@ function renderTECategory(display){
 // FORECAST EDITOR  (line × month grid, editable Jun–Dec, comments per cell)
 // =============================================================
 function getForecastRows(){
-  const rows = [
-    { section:'Payroll & Benefits' },
-    'salary','hayden_salary','benefits','hayden_benefits','anthem',
-    { section:'Service & Professional Fees' },
-    'ccsi','accordion','shankly',
-    { section:'Travel & Entertainment' },
-    'travel','mileage_e','mileage_m','meals','parking',
-    { section:'Other Labor & Supplies' },
-    'fed_unemp','hourly','overtime','bonus','vacation','supplies',
-  ];
-  if (reqLines.length){
-    rows.push({ section:'Open Requisitions (planned)' });
-    reqLines.forEach(l=> rows.push(l.id));
-  }
+  // fixed display order of the base line ids
+  const baseOrder = ['salary','hayden_salary','benefits','hayden_benefits','anthem',
+                     'ccsi','accordion','shankly',
+                     'travel','mileage_e','mileage_m','meals','parking',
+                     'fed_unemp','hourly','overtime','bonus','vacation','supplies'];
+
+  const rows = [];
+  SECTIONS.forEach(sec=>{
+    rows.push({ section:sec.label, key:sec.key });
+    // base + hayden lines for this section, kept in baseOrder
+    baseOrder.forEach(id=>{
+      const l = lineById(id);
+      if (l && sec.cats.includes(l.cat)) rows.push(id);
+    });
+    // requisition lines that fall in this section (payroll/benefits → Wages)
+    reqLines.forEach(l=>{ if (sec.cats.includes(l.cat)) rows.push(l.id); });
+    // custom lines Ben added to this section
+    customLines.forEach(l=>{ if (l.section===sec.key) rows.push(l.id); });
+  });
   return rows;
 }
 
 function lineById(id){
-  return lineItems.find(l=>l.id===id) || haydenLines.find(l=>l.id===id) || reqLines.find(l=>l.id===id);
+  return lineItems.find(l=>l.id===id) || haydenLines.find(l=>l.id===id) || reqLines.find(l=>l.id===id) || customLines.find(l=>l.id===id);
 }
 
 function cellKey(lineId, monthIdx){ return `forecast|${lineId}|${monthIdx}`; }
@@ -477,7 +506,8 @@ function renderForecastTable(){
   let bodyRows = '';
   getForecastRows().forEach(row=>{
     if (typeof row === 'object'){
-      bodyRows += `<tr class="row-section"><td colspan="14">${row.section}</td></tr>`;
+      const addBtn = row.key ? `<button class="sec-add" title="Add a line to ${escapeHtml(row.section)}" onclick="openAddLine('${row.key}')">+</button>` : '';
+      bodyRows += `<tr class="row-section"><td colspan="14"><div class="sec-wrap"><span class="sec-label">${row.section}</span>${addBtn}</div></td></tr>`;
       return;
     }
     const id = row;
@@ -485,7 +515,9 @@ function renderForecastTable(){
     if (!l) return;
     const vals = forecastState[id] || [];
     const isHayden = l.hayden || l.req;
-    let rowHtml = `<tr class="${isHayden?'row-hayden':''}"><td class="lbl">${l.label}</td>`;
+    const isCustom = !!l.custom;
+    const delBtn = isCustom ? `<button class="line-del" title="Remove this line" onclick="deleteCustomLine('${id}')">&times;</button>` : '';
+    let rowHtml = `<tr class="${isHayden?'row-hayden':''}${isCustom?' row-custom':''}"><td class="lbl">${l.label}${delBtn}</td>`;
     let total = 0;
     months.forEach((m,i)=>{
       const v = vals[i] || 0; total += v;
@@ -899,6 +931,46 @@ async function deleteReq(id){
 }
 
 // =============================================================
+// CUSTOM FORECAST LINES (per-section "+")
+// =============================================================
+function sectionLabel(key){ const s = SECTIONS.find(x=>x.key===key); return s ? s.label : key; }
+
+async function openAddLine(sectionKey){
+  const name = prompt(`Add a line to "${sectionLabel(sectionKey)}"\n\nEnter a name (employee, vendor, or cost):`);
+  if (name === null) return;            // cancelled
+  const label = name.trim();
+  if (!label){ toast('Enter a name for the line', true); return; }
+
+  const id = `custom_${sectionKey}_${Date.now()}`;
+  try {
+    const { error } = await sb.from('custom_lines').insert({ id, label, cat:sectionKey });
+    if (error) throw error;
+  } catch(e){ console.warn('custom line save failed', e); toast('Could not add line — check connection', true); return; }
+
+  const line = { id, label, section:sectionKey, cat:SECTION_DEFAULT_CAT[sectionKey]||'other', custom:true };
+  customLines.push(line);
+  forecastState[id] = months.map(()=> 0);   // blank, editable
+  await saveForecastCloud();
+  renderForecast();
+  toast(`Added "${label}" — type the monthly amounts`);
+}
+
+async function deleteCustomLine(id){
+  const l = customLines.find(x=>x.id===id);
+  if (!l) return;
+  if (!confirm(`Remove "${l.label}" from the forecast?`)) return;
+  try {
+    const { error } = await sb.from('custom_lines').delete().eq('id', id);
+    if (error) throw error;
+  } catch(e){ console.warn('custom line delete failed', e); toast('Delete failed — check connection', true); return; }
+  customLines = customLines.filter(x=>x.id!==id);
+  delete forecastState[id];
+  await saveForecastCloud();
+  renderForecast();
+  toast('Line removed');
+}
+
+// =============================================================
 // EXPORT SNAPSHOT (JSON download of forecast + comments)
 // =============================================================
 function exportSnapshot(){
@@ -908,6 +980,7 @@ function exportSnapshot(){
     forecast: forecastState,
     comments: commentsState,
     requisitions: reqs,
+    customLines: customLines,
   };
   const blob = new Blob([JSON.stringify(snap, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
@@ -1004,7 +1077,7 @@ async function doLogin(){
 async function doSignOut(){
   try { await sb.auth.signOut(); } catch(e){}
   // wipe in-memory data so nothing lingers
-  forecastState = {}; commentsState = {}; lineItems = []; reqs = []; reqLines = [];
+  forecastState = {}; commentsState = {}; lineItems = []; reqs = []; reqLines = []; customLines = [];
   document.getElementById('loginEmail').value = '';
   document.getElementById('loginPass').value = '';
   showLogin('You have been signed out.');

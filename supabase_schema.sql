@@ -49,6 +49,14 @@ create table if not exists public.requisitions (
   created_at  timestamptz not null default now()
 );
 
+-- 5) CUSTOM LINES - extra forecast rows Ben adds to a section (employee/vendor/cost)
+create table if not exists public.custom_lines (
+  id          text primary key,            -- app-generated unique id
+  label       text not null,
+  cat         text not null,               -- which section: payroll | service | te | other
+  created_at  timestamptz not null default now()
+);
+
 -- =====================================================================
 -- ROW LEVEL SECURITY - authenticated users only
 -- =====================================================================
@@ -56,6 +64,7 @@ alter table public.actuals  enable row level security;
 alter table public.forecast enable row level security;
 alter table public.comments enable row level security;
 alter table public.requisitions enable row level security;
+alter table public.custom_lines enable row level security;
 
 drop policy if exists "actuals read" on public.actuals;
 create policy "actuals read" on public.actuals
@@ -82,6 +91,14 @@ drop policy if exists "reqs delete" on public.requisitions;
 create policy "reqs read"   on public.requisitions for select to authenticated using (true);
 create policy "reqs insert" on public.requisitions for insert to authenticated with check (true);
 create policy "reqs delete" on public.requisitions for delete to authenticated using (true);
+
+-- CUSTOM LINES - logged-in users read + add + delete
+drop policy if exists "custom read"   on public.custom_lines;
+drop policy if exists "custom insert" on public.custom_lines;
+drop policy if exists "custom delete" on public.custom_lines;
+create policy "custom read"   on public.custom_lines for select to authenticated using (true);
+create policy "custom insert" on public.custom_lines for insert to authenticated with check (true);
+create policy "custom delete" on public.custom_lines for delete to authenticated using (true);
 
 -- =====================================================================
 -- SEED THE ACTUALS (Jan-May 2026, from the May close)
@@ -112,34 +129,15 @@ insert into public.forecast (reviewer, data) values ('ben','{}')
 on conflict (reviewer) do nothing;
 
 -- =====================================================================
--- CREATE THE THREE ACCOUNTS
--- Easiest: Supabase Dashboard -> Authentication -> Users -> "Add user"
---   (set email + password, tick "Auto Confirm User"). Do this 3 times.
+-- CREATE LOGIN ACCOUNTS
+-- Do NOT create users with SQL — inserting into auth.users by hand
+-- produces broken accounts that can't log in and can't be deleted in the UI.
 --
--- Or run this block to create them via SQL. REPLACE THE PASSWORDS FIRST.
+-- Create accounts the supported way instead:
+--   Supabase Dashboard -> Authentication -> Users -> "Add user"
+--   -> enter email + password, tick "Auto Confirm User" -> save.
+--   Repeat for each person (Ben, Jae, you).
+--
+-- The login name shown in the app comes from the part of the email
+-- before the "@", e.g. BFremont@kbs-services.com shows as "BFremont".
 -- =====================================================================
-do $$
-declare
-  users jsonb := '[
-    {"email":"ben@kbs-services.com",   "pw":"CHANGE_ME_BEN"},
-    {"email":"jae@kbs-services.com",   "pw":"CHANGE_ME_JAE"},
-    {"email":"hayden@kbs-services.com","pw":"CHANGE_ME_YOU"}
-  ]';
-  u jsonb;
-begin
-  for u in select * from jsonb_array_elements(users)
-  loop
-    if not exists (select 1 from auth.users where email = (u->>'email')) then
-      insert into auth.users (
-        instance_id, id, aud, role, email, encrypted_password,
-        email_confirmed_at, created_at, updated_at,
-        raw_app_meta_data, raw_user_meta_data
-      ) values (
-        '00000000-0000-0000-0000-000000000000', gen_random_uuid(), 'authenticated','authenticated',
-        u->>'email', crypt(u->>'pw', gen_salt('bf')),
-        now(), now(), now(),
-        '{"provider":"email","providers":["email"]}', '{}'
-      );
-    end if;
-  end loop;
-end $$;
