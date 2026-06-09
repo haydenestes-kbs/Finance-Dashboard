@@ -211,6 +211,30 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 .cmt-del{font-size:9px;color:var(--subtle);cursor:pointer;border:none;background:none;padding:0;margin-top:4px;}
 .cmt-del:hover{color:var(--red);}
 
+/* ── REQUISITION MODAL ── */
+.req-overlay{position:fixed;inset:0;background:rgba(15,23,42,.28);z-index:1700;display:none;align-items:center;justify-content:center;padding:20px;}
+.req-overlay.show{display:flex;}
+.req-modal{background:#fff;border-radius:12px;width:100%;max-width:440px;box-shadow:0 20px 60px rgba(15,23,42,.3);overflow:hidden;}
+.req-modal-hdr{padding:16px 20px;border-bottom:1px solid #F1F5F9;display:flex;justify-content:space-between;align-items:flex-start;}
+.req-modal-title{font-size:15px;font-weight:500;color:var(--text);}
+.req-modal-sub{font-size:11px;color:var(--muted);margin-top:3px;}
+.req-modal-body{padding:18px 20px;display:flex;flex-direction:column;gap:14px;}
+.req-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.req-field label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:5px;font-weight:500;}
+.req-field input{width:100%;border:var(--border);border-radius:8px;padding:9px 11px;font-family:inherit;font-size:13px;color:var(--text);outline:none;transition:border-color .15s;}
+.req-field input:focus{border-color:var(--accent);}
+.req-preview{font-size:11px;color:var(--accent);background:var(--blue-bg);border-radius:8px;padding:9px 11px;display:none;}
+.req-preview.show{display:block;}
+.req-error{font-size:11px;color:var(--red);min-height:14px;}
+.req-modal-foot{padding:14px 20px;border-top:1px solid #F1F5F9;background:#FAFBFC;display:flex;justify-content:flex-end;gap:10px;}
+
+.org-node.req{border:1px dashed var(--accent);background:#F5F9FF;}
+.org-node.req .org-node-role{color:var(--accent);}
+.org-node-badge{position:absolute;top:-9px;left:-6px;font-size:8px;background:var(--amber);color:#fff;padding:2px 7px;border-radius:99px;letter-spacing:.03em;font-weight:500;}
+.org-req-del{position:absolute;top:-8px;right:-7px;width:18px;height:18px;border-radius:50%;background:#fff;border:var(--border);color:var(--muted);font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.org-req-del:hover{color:var(--red);border-color:var(--red);}
+.org-node{position:relative;}
+
 /* ── ORG CHART ── */
 .org-wrap{padding:8px 0;overflow-x:auto;}
 .org-tree{display:flex;flex-direction:column;align-items:center;gap:0;min-width:900px;}
@@ -295,6 +319,55 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
       <div class="cmt-compose-actions">
         <button class="btn-gen" id="cmtSaveBtn" onclick="submitComment()">Add comment</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- REQUISITION MODAL -->
+<div class="req-overlay" id="reqOverlay" onclick="closeReq(event)">
+  <div class="req-modal" onclick="event.stopPropagation()">
+    <div class="req-modal-hdr">
+      <div>
+        <div class="req-modal-title">Add Requisition</div>
+        <div class="req-modal-sub">Open role · flows into the forecast at salary midpoint</div>
+      </div>
+      <button class="cmt-close" onclick="closeReq()">&times;</button>
+    </div>
+    <div class="req-modal-body">
+      <div class="req-field">
+        <label for="reqTitle">Title</label>
+        <input type="text" id="reqTitle" placeholder="e.g. Senior Financial Analyst">
+      </div>
+      <div class="req-field">
+        <label for="reqReports">Reports to</label>
+        <input type="text" id="reqReports" placeholder="e.g. Timothy Moynihan, or Ben Fremont">
+      </div>
+      <div class="req-row">
+        <div class="req-field">
+          <label for="reqLow">Salary range — low</label>
+          <input type="text" id="reqLow" inputmode="numeric" placeholder="$90,000">
+        </div>
+        <div class="req-field">
+          <label for="reqHigh">Salary range — high</label>
+          <input type="text" id="reqHigh" inputmode="numeric" placeholder="$110,000">
+        </div>
+      </div>
+      <div class="req-row">
+        <div class="req-field">
+          <label for="reqBonus">Bonus % (optional)</label>
+          <input type="text" id="reqBonus" inputmode="numeric" placeholder="10">
+        </div>
+        <div class="req-field">
+          <label for="reqStart">Target start date</label>
+          <input type="date" id="reqStart">
+        </div>
+      </div>
+      <div class="req-preview" id="reqPreview"></div>
+      <div class="req-error" id="reqError"></div>
+    </div>
+    <div class="req-modal-foot">
+      <button class="btn-ghost" onclick="closeReq()">Cancel</button>
+      <button class="btn-gen" id="reqSaveBtn" onclick="submitReq()">Add requisition</button>
     </div>
   </div>
 </div>
@@ -597,7 +670,7 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
           </div>
           <div class="kpi">
             <div class="kpi-label">Open Requisitions</div>
-            <div class="kpi-val">0</div>
+            <div class="kpi-val" id="orgOpenReqs">0</div>
             <div class="kpi-sub">None open</div>
           </div>
           <div class="kpi">
@@ -613,7 +686,10 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
               <div class="card-title">Org Structure</div>
               <div class="card-sub">Financial Planning &amp; Analysis · Reporting to Ben Fremont</div>
             </div>
-            <span class="badge bmuted">No open requisitions</span>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span class="badge bmuted" id="reqBadge">No open requisitions</span>
+              <button class="btn-gen" id="addReqBtn" style="padding:6px 14px;">+ Add requisition</button>
+            </div>
           </div>
           <div class="card-body">
             <div class="org-wrap"><div class="org-tree" id="orgTree"></div></div>

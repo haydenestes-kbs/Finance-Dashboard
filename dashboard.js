@@ -5,7 +5,7 @@
 // -------------------------------------------------------------
 // SUPABASE CONFIG  ← fill these in (see DEPLOYMENT_GUIDE.md)
 // -------------------------------------------------------------
-const SUPABASE_URL = 'https://qlrjughdnauodapvubvq.supabase.co';
+const SUPABASE_URL = 'https://qlrjughdnauodapvubvq.supabase.co/rest/v1/';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFscmp1Z2hkbmF1b2RhcHZ1YnZxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwMjIzMjUsImV4cCI6MjA5NjU5ODMyNX0.b72XbKUJf4LA4EtEtI4d9FnsTifd2ow0crhRWoahaPY';
 
 let sb = null;
@@ -47,6 +47,42 @@ function buildHaydenLines(){
 }
 
 // =============================================================
+// REQUISITIONS — open roles Ben adds on the org chart.
+// Each req creates flagged forecast lines (salary at midpoint + bonus,
+// plus benefits), active from its target start month through December.
+// =============================================================
+let reqs = [];        // [{id,title,reports_to,salary_low,salary_high,bonus_pct,start_date}]
+let reqLines = [];    // derived forecast line objects
+
+// month index (0=Jan..11=Dec) of a req's start date; defaults to June (5) if unset
+function reqStartIdx(r){
+  if (!r.start_date) return 5;
+  const d = new Date(r.start_date + 'T00:00:00');
+  const idx = d.getMonth();           // 0..11
+  return isNaN(idx) ? 5 : Math.max(0, Math.min(11, idx));
+}
+
+// annual all-in for a req: midpoint salary + bonus%, benefits computed separately
+function reqMidpointAnnual(r){
+  const mid = (Number(r.salary_low) + Number(r.salary_high)) / 2;
+  return Math.round(mid);
+}
+
+function buildReqLines(){
+  reqLines = [];
+  reqs.forEach(r=>{
+    const annual = reqMidpointAnnual(r);
+    const bonusAnnual = Math.round(annual * (Number(r.bonus_pct)||0) / 100);
+    const salMonthly = Math.round((annual + bonusAnnual) / 12);   // salary line incl. bonus, spread monthly
+    const benMonthly = Math.round(salMonthly * benefitsRatio);
+    const startIdx = reqStartIdx(r);
+    const short = (r.title || 'Open Req').length > 22 ? (r.title.slice(0,20)+'…') : (r.title||'Open Req');
+    reqLines.push({ id:`req_${r.id}_sal`, label:`Salary — ${short} (open)`,  cat:'payroll',  req:true, reqId:r.id, monthly:salMonthly, startIdx });
+    reqLines.push({ id:`req_${r.id}_ben`, label:`Benefits — ${short} (open)`, cat:'benefits', req:true, reqId:r.id, monthly:benMonthly, startIdx });
+  });
+}
+
+// =============================================================
 // CATEGORY BUDGETS (derived from YTD actuals as the baseline)
 // Monthly budget = YTD-actual average per line. Forecast defaults to it.
 // =============================================================
@@ -85,6 +121,10 @@ function buildDefaultForecast(){
   haydenLines.forEach(l => {
     fc[l.id] = months.map((m,i)=> i<ACTUAL_MONTHS ? 0 : l.monthly);
   });
+  reqLines.forEach(l => {
+    // zero before start month and across all actuals; monthly amount from start month → Dec
+    fc[l.id] = months.map((m,i)=> (i<ACTUAL_MONTHS || i<l.startIdx) ? 0 : l.monthly);
+  });
   return fc;
 }
 
@@ -120,6 +160,12 @@ async function loadActuals(){
 async function loadAll(){
   // actuals first (everything else depends on them)
   await loadActuals();
+  // requisitions (must exist before forecast defaults are built)
+  try {
+    const { data: reqRows } = await sb.from('requisitions').select('*').order('created_at',{ascending:true});
+    reqs = reqRows || [];
+  } catch(e){ reqs = []; }
+  buildReqLines();
   // forecast
   const { data: fcRow } = await sb.from('forecast').select('data').eq('reviewer','ben').maybeSingle();
   forecastState = { ...buildDefaultForecast(), ...(fcRow && fcRow.data ? fcRow.data : {}) };
@@ -394,19 +440,26 @@ function renderTECategory(display){
 // =============================================================
 // FORECAST EDITOR  (line × month grid, editable Jun–Dec, comments per cell)
 // =============================================================
-const forecastRows = [
-  { section:'Payroll & Benefits' },
-  'salary','hayden_salary','benefits','hayden_benefits','anthem',
-  { section:'Service & Professional Fees' },
-  'ccsi','accordion','shankly',
-  { section:'Travel & Entertainment' },
-  'travel','mileage_e','mileage_m','meals','parking',
-  { section:'Other Labor & Supplies' },
-  'fed_unemp','hourly','overtime','bonus','vacation','supplies',
-];
+function getForecastRows(){
+  const rows = [
+    { section:'Payroll & Benefits' },
+    'salary','hayden_salary','benefits','hayden_benefits','anthem',
+    { section:'Service & Professional Fees' },
+    'ccsi','accordion','shankly',
+    { section:'Travel & Entertainment' },
+    'travel','mileage_e','mileage_m','meals','parking',
+    { section:'Other Labor & Supplies' },
+    'fed_unemp','hourly','overtime','bonus','vacation','supplies',
+  ];
+  if (reqLines.length){
+    rows.push({ section:'Open Requisitions (planned)' });
+    reqLines.forEach(l=> rows.push(l.id));
+  }
+  return rows;
+}
 
 function lineById(id){
-  return lineItems.find(l=>l.id===id) || haydenLines.find(l=>l.id===id);
+  return lineItems.find(l=>l.id===id) || haydenLines.find(l=>l.id===id) || reqLines.find(l=>l.id===id);
 }
 
 function cellKey(lineId, monthIdx){ return `forecast|${lineId}|${monthIdx}`; }
@@ -422,7 +475,7 @@ function renderForecastTable(){
   head += `<th class="fcst-h">FY Total</th></tr></thead>`;
 
   let bodyRows = '';
-  forecastRows.forEach(row=>{
+  getForecastRows().forEach(row=>{
     if (typeof row === 'object'){
       bodyRows += `<tr class="row-section"><td colspan="14">${row.section}</td></tr>`;
       return;
@@ -431,7 +484,7 @@ function renderForecastTable(){
     const l = lineById(id);
     if (!l) return;
     const vals = forecastState[id] || [];
-    const isHayden = l.hayden;
+    const isHayden = l.hayden || l.req;
     let rowHtml = `<tr class="${isHayden?'row-hayden':''}"><td class="lbl">${l.label}</td>`;
     let total = 0;
     months.forEach((m,i)=>{
@@ -443,7 +496,7 @@ function renderForecastTable(){
       if (isA){
         rowHtml += `<td class="actual-cell">${v===0?'<span style="color:#CBD5E1">–</span>':fmt(v)}${dot}${trig}</td>`;
       } else {
-        rowHtml += `<td class="fcst-cell"><input class="fcst-input" type="text" data-line="${id}" data-month="${i}" value="${v}">${dot}${trig}</td>`;
+        rowHtml += `<td class="fcst-cell"><input class="fcst-input" type="text" data-line="${id}" data-month="${i}" data-raw="${v}" value="${fmt(v)}">${dot}${trig}</td>`;
       }
     });
     rowHtml += `<td class="actual-cell strong" style="font-weight:500;color:var(--text)">${fmt(total)}</td></tr>`;
@@ -454,7 +507,7 @@ function renderForecastTable(){
   let footCols = '';
   let grand = 0;
   months.forEach((m,i)=>{
-    const colTotal = forecastRows.filter(r=>typeof r==='string').reduce((s,id)=> s + ((forecastState[id]||[])[i]||0), 0);
+    const colTotal = getForecastRows().filter(r=>typeof r==='string').reduce((s,id)=> s + ((forecastState[id]||[])[i]||0), 0);
     grand += colTotal;
     footCols += `<td>${fmt(colTotal)}</td>`;
   });
@@ -465,8 +518,11 @@ function renderForecastTable(){
   // wire inputs
   tbl.querySelectorAll('.fcst-input').forEach(inp=>{
     inp.addEventListener('focus', e=>{
-      const v = parseInt(String(e.target.value).replace(/[^0-9\-]/g,''));
-      if(!isNaN(v)) e.target.value = v;
+      // show the plain number for editing (strip $ and commas)
+      const raw = e.target.dataset.raw;
+      const v = parseInt(String(raw).replace(/[^0-9\-]/g,''));
+      e.target.value = isNaN(v) ? '' : v;
+      e.target.select();
     });
     inp.addEventListener('blur', async e=>{
       const id = e.target.dataset.line, mi = parseInt(e.target.dataset.month);
@@ -485,7 +541,7 @@ function forecastLineYTD(id){ return (forecastState[id]||[]).slice(0,ACTUAL_MONT
 function forecastLineFwd(id){ return (forecastState[id]||[]).slice(ACTUAL_MONTHS).reduce((a,b)=>a+b,0); }
 
 function renderForecastKPIs(){
-  const allIds = forecastRows.filter(r=>typeof r==='string');
+  const allIds = getForecastRows().filter(r=>typeof r==='string');
   const total = allIds.reduce((s,id)=> s + (forecastState[id]||[]).reduce((a,b)=>a+b,0), 0);
   const ytdActual = allIds.reduce((s,id)=> s + forecastLineYTD(id), 0);
   const fwd = allIds.reduce((s,id)=> s + forecastLineFwd(id), 0);
@@ -498,7 +554,7 @@ function renderForecastKPIs(){
 
 function renderForecastChart(){
   if (forecastChart) forecastChart.destroy();
-  const allIds = forecastRows.filter(r=>typeof r==='string');
+  const allIds = getForecastRows().filter(r=>typeof r==='string');
   const monthTotals = months.map((m,i)=> allIds.reduce((s,id)=> s + ((forecastState[id]||[])[i]||0), 0));
   const actualData = monthTotals.map((v,i)=> i<ACTUAL_MONTHS ? v : null);
   const forecastData = monthTotals.map((v,i)=> i>=ACTUAL_MONTHS-1 ? v : null);
@@ -709,6 +765,137 @@ function renderOrg(){
       </div>
     </div>
   `;
+
+  // Open requisitions section
+  if (reqs.length){
+    const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString([], {month:'short',day:'numeric',year:'numeric'}) : 'TBD';
+    let reqHtml = `
+      <div style="height:18px"></div>
+      <div class="org-section-label">Open Requisitions</div>
+      <div class="org-hbar-wrap"></div>
+      <div style="height:14px"></div>
+      <div class="org-row">`;
+    reqs.forEach(r=>{
+      const mid = reqMidpointAnnual(r);
+      reqHtml += `
+        <div class="org-branch">
+          <div class="org-node req">
+            <span class="org-node-badge">OPEN REQ</span>
+            <button class="org-req-del" title="Remove requisition" onclick="deleteReq(${r.id})">&times;</button>
+            <div class="org-node-role">${escapeHtml(r.title||'Open Role')}</div>
+            <div class="org-node-name">${fmt(mid)} mid${r.bonus_pct?` · ${r.bonus_pct}% bonus`:''}</div>
+            <div class="org-node-meta">${r.reports_to?escapeHtml(r.reports_to)+' · ':''}Start ${fmtDate(r.start_date)}</div>
+          </div>
+        </div>`;
+    });
+    reqHtml += `</div>`;
+    tree.insertAdjacentHTML('beforeend', reqHtml);
+  }
+
+  // badge + KPI
+  const badge = document.getElementById('reqBadge');
+  if (badge){
+    badge.textContent = reqs.length ? `${reqs.length} open requisition${reqs.length>1?'s':''}` : 'No open requisitions';
+    badge.className = 'badge ' + (reqs.length ? 'bwarn' : 'bmuted');
+  }
+  const kpiOpen = document.getElementById('orgOpenReqs');
+  if (kpiOpen) kpiOpen.textContent = reqs.length;
+  const kpiCount = document.getElementById('orgCount');
+  if (kpiCount) kpiCount.textContent = 12 + reqs.length;
+}
+
+// =============================================================
+// REQUISITION MODAL
+// =============================================================
+function parseNum(s){ return parseInt(String(s||'').replace(/[^0-9\-]/g,'')) || 0; }
+
+function openReqModal(){
+  ['reqTitle','reqReports','reqLow','reqHigh','reqBonus','reqStart'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('reqError').textContent = '';
+  document.getElementById('reqPreview').classList.remove('show');
+  document.getElementById('reqOverlay').classList.add('show');
+  setTimeout(()=>document.getElementById('reqTitle').focus(), 50);
+}
+
+function closeReq(ev){
+  if (ev && ev.target.id !== 'reqOverlay') return;
+  document.getElementById('reqOverlay').classList.remove('show');
+}
+
+function updateReqPreview(){
+  const low = parseNum(document.getElementById('reqLow').value);
+  const high = parseNum(document.getElementById('reqHigh').value);
+  const bonus = parseNum(document.getElementById('reqBonus').value);
+  const prev = document.getElementById('reqPreview');
+  if (low>0 && high>0){
+    const mid = Math.round((low+high)/2);
+    const bonusAmt = Math.round(mid*bonus/100);
+    const ben = Math.round((mid+bonusAmt)*benefitsRatio);
+    const allIn = mid + bonusAmt + ben;
+    prev.innerHTML = `Forecast impact: midpoint ${fmt(mid)}${bonus?` + ${bonus}% bonus ${fmt(bonusAmt)}`:''} + benefits ${fmt(ben)} = <strong>${fmt(allIn)}/yr</strong> all-in, spread monthly from the start date.`;
+    prev.classList.add('show');
+  } else {
+    prev.classList.remove('show');
+  }
+}
+['reqLow','reqHigh','reqBonus'].forEach(id=>{
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', updateReqPreview);
+});
+
+async function submitReq(){
+  const title = document.getElementById('reqTitle').value.trim();
+  const reports = document.getElementById('reqReports').value.trim();
+  const low = parseNum(document.getElementById('reqLow').value);
+  const high = parseNum(document.getElementById('reqHigh').value);
+  const bonus = parseNum(document.getElementById('reqBonus').value);
+  const start = document.getElementById('reqStart').value || null;
+  const err = document.getElementById('reqError');
+  err.textContent = '';
+
+  if (!title){ err.textContent = 'Enter a title.'; return; }
+  if (low<=0 || high<=0){ err.textContent = 'Enter both salary range values.'; return; }
+  if (high < low){ err.textContent = 'High end must be greater than the low end.'; return; }
+
+  const btn = document.getElementById('reqSaveBtn');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const { data, error } = await sb.from('requisitions')
+      .insert({ title, reports_to:reports||null, salary_low:low, salary_high:high, bonus_pct:bonus, start_date:start })
+      .select().single();
+    if (error) throw error;
+    reqs.push(data);
+    buildReqLines();
+    // add default forecast values for the new req's lines (merge, keep existing edits)
+    const defaults = buildDefaultForecast();
+    reqLines.filter(l=>l.reqId===data.id).forEach(l=>{ forecastState[l.id] = defaults[l.id]; });
+    await saveForecastCloud();
+    closeReq();
+    renderOrg();
+    renderForecast();
+    toast('Requisition added · folded into forecast');
+  } catch(e){
+    console.warn('req save failed', e);
+    err.textContent = 'Could not save. Check your connection and try again.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Add requisition';
+  }
+}
+
+async function deleteReq(id){
+  if (!confirm('Remove this requisition? It will be taken out of the forecast too.')) return;
+  try {
+    const { error } = await sb.from('requisitions').delete().eq('id', id);
+    if (error) throw error;
+  } catch(e){ console.warn('req delete failed', e); toast('Delete failed — check connection', true); return; }
+  // remove its forecast lines from state
+  reqLines.filter(l=>l.reqId===id).forEach(l=>{ delete forecastState[l.id]; });
+  reqs = reqs.filter(r=>r.id!==id);
+  buildReqLines();
+  await saveForecastCloud();
+  renderOrg();
+  renderForecast();
+  toast('Requisition removed');
 }
 
 // =============================================================
@@ -720,6 +907,7 @@ function exportSnapshot(){
     reviewer: REVIEWER,
     forecast: forecastState,
     comments: commentsState,
+    requisitions: reqs,
   };
   const blob = new Blob([JSON.stringify(snap, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
@@ -756,6 +944,7 @@ document.getElementById('saveForecast').addEventListener('click', async ()=>{
 });
 
 document.getElementById('exportBtn').addEventListener('click', exportSnapshot);
+document.getElementById('addReqBtn').addEventListener('click', openReqModal);
 
 // =============================================================
 // AUTH GATE + INIT
@@ -815,7 +1004,7 @@ async function doLogin(){
 async function doSignOut(){
   try { await sb.auth.signOut(); } catch(e){}
   // wipe in-memory data so nothing lingers
-  forecastState = {}; commentsState = {}; lineItems = [];
+  forecastState = {}; commentsState = {}; lineItems = []; reqs = []; reqLines = [];
   document.getElementById('loginEmail').value = '';
   document.getElementById('loginPass').value = '';
   showLogin('You have been signed out.');

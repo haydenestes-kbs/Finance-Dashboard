@@ -37,12 +37,25 @@ create table if not exists public.comments (
 );
 create index if not exists comments_cell_key_idx on public.comments (cell_key);
 
+-- 4) REQUISITIONS - open reqs Ben adds on the org chart; flow into the forecast
+create table if not exists public.requisitions (
+  id          bigint generated always as identity primary key,
+  title       text not null,
+  reports_to  text,                        -- manager/team this req sits under
+  salary_low  numeric not null default 0,
+  salary_high numeric not null default 0,
+  bonus_pct   numeric not null default 0,  -- e.g. 10 for 10%
+  start_date  date,                        -- target start
+  created_at  timestamptz not null default now()
+);
+
 -- =====================================================================
 -- ROW LEVEL SECURITY - authenticated users only
 -- =====================================================================
 alter table public.actuals  enable row level security;
 alter table public.forecast enable row level security;
 alter table public.comments enable row level security;
+alter table public.requisitions enable row level security;
 
 drop policy if exists "actuals read" on public.actuals;
 create policy "actuals read" on public.actuals
@@ -61,6 +74,14 @@ drop policy if exists "comments delete" on public.comments;
 create policy "comments read"   on public.comments for select to authenticated using (true);
 create policy "comments insert" on public.comments for insert to authenticated with check (true);
 create policy "comments delete" on public.comments for delete to authenticated using (true);
+
+-- REQUISITIONS - logged-in users read + add + delete
+drop policy if exists "reqs read"   on public.requisitions;
+drop policy if exists "reqs insert" on public.requisitions;
+drop policy if exists "reqs delete" on public.requisitions;
+create policy "reqs read"   on public.requisitions for select to authenticated using (true);
+create policy "reqs insert" on public.requisitions for insert to authenticated with check (true);
+create policy "reqs delete" on public.requisitions for delete to authenticated using (true);
 
 -- =====================================================================
 -- SEED THE ACTUALS (Jan-May 2026, from the May close)
@@ -100,8 +121,9 @@ on conflict (reviewer) do nothing;
 do $$
 declare
   users jsonb := '[
-    {"email":"ben@kbs-services.com",   "pw":"KBS2026"},
-    {"email":"hayden@kbs-services.com","pw":"KBS2026"}
+    {"email":"ben@kbs-services.com",   "pw":"CHANGE_ME_BEN"},
+    {"email":"jae@kbs-services.com",   "pw":"CHANGE_ME_JAE"},
+    {"email":"hayden@kbs-services.com","pw":"CHANGE_ME_YOU"}
   ]';
   u jsonb;
 begin
