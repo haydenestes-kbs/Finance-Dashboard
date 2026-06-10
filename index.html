@@ -3,9 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KBS FP&A Workspace v2 — Department P&L (prototype)</title>
+<title>KBS FP&A Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
@@ -13,11 +14,23 @@
   --accent:#1A56A0;--accent-b:#2E6FCC;
   --green:#1A7A4A;--green-bg:#E8F5EE;--red:#B91C1C;--red-bg:#FEF2F2;
   --amber:#B45309;--amber-bg:#FFFBEB;--blue-bg:#EFF6FF;
-  --commit:#7C3AED;--commit-bg:#F3E8FF;
   --border:1px solid #E2E8F0;
   --text:#0F172A;--muted:#64748B;--subtle:#94A3B8;--bg:#F8FAFC;
 }
 html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);font-size:13px;}
+
+/* ---------- LOGIN ---------- */
+.login-screen{position:fixed;inset:0;background:var(--navy-800);display:flex;align-items:center;justify-content:center;z-index:100;}
+.login-card{background:#fff;border-radius:14px;padding:34px 32px;width:340px;box-shadow:0 20px 60px rgba(0,0,0,.3);}
+.login-logo{font-size:22px;font-weight:600;letter-spacing:.04em;}
+.login-sub{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-top:4px;margin-bottom:22px;}
+.login-card label{display:block;font-size:11px;color:var(--muted);margin:12px 0 5px;}
+.login-card input{width:100%;border:var(--border);border-radius:7px;padding:10px 12px;font-family:inherit;font-size:13px;outline:none;}
+.login-card input:focus{border-color:var(--accent);}
+.login-btn{width:100%;margin-top:18px;background:var(--accent);color:#fff;border:none;border-radius:7px;padding:11px;font-size:13px;font-weight:500;font-family:inherit;cursor:pointer;}
+.login-btn:disabled{opacity:.6;cursor:default;}
+.login-err{color:var(--red);font-size:11px;margin-top:12px;min-height:14px;}
+
 .app{display:flex;height:100vh;overflow:hidden;}
 .nav{width:222px;background:var(--navy-800);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;}
 .nav-logo{padding:22px 22px 16px;border-bottom:1px solid rgba(255,255,255,.09);}
@@ -29,13 +42,23 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 .nav-item.active{background:rgba(255,255,255,.1);color:#fff;border-left-color:#60A5FA;font-weight:500;}
 .ni{width:15px;height:15px;flex-shrink:0;opacity:.75;}
 .nav-item.active .ni{opacity:1;}
-.nav-foot{margin-top:auto;padding:16px 22px;border-top:1px solid rgba(255,255,255,.09);font-size:11px;color:var(--navy-300);line-height:1.5;}
+.nav-foot{margin-top:auto;padding:16px 22px;border-top:1px solid rgba(255,255,255,.09);font-size:11px;color:var(--navy-300);line-height:1.6;}
+.nf-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--navy-400);}
+.nf-val{color:var(--navy-200);margin-bottom:8px;}
 
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden;}
 .topbar{background:#fff;border-bottom:var(--border);padding:10px 24px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
 .topbar-left{display:flex;align-items:center;gap:12px;}
+.topbar-right{display:flex;align-items:center;gap:12px;}
 .psel{font-size:12px;background:var(--bg);border:var(--border);border-radius:6px;padding:6px 10px;color:var(--text);cursor:pointer;font-family:inherit;}
-.proto-pill{font-size:10px;color:var(--amber);background:var(--amber-bg);padding:3px 10px;border-radius:99px;font-weight:500;}
+.sync-badge{font-size:11px;color:var(--green);display:flex;align-items:center;gap:6px;}
+.sync-badge.off{color:var(--amber);}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;}
+.live-dot.off{background:var(--amber);}
+.tb-user{font-size:12px;color:var(--muted);}
+.tb-avatar{width:30px;height:30px;border-radius:50%;background:var(--navy-800);color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;}
+.tb-signout{font-size:12px;border:var(--border);background:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;font-family:inherit;}
+
 .content{flex:1;overflow-y:auto;padding:22px 24px 60px;display:flex;flex-direction:column;gap:18px;}
 .page-title{font-size:20px;font-weight:600;}
 .page-sub{font-size:12px;color:var(--muted);margin-top:2px;}
@@ -69,6 +92,7 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 .card-sub{font-size:11px;color:var(--muted);margin-top:2px;}
 .card-body{padding:16px 18px;}
 .two{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
 
 .badge{font-size:10px;padding:2px 8px;border-radius:99px;font-weight:500;white-space:nowrap;display:inline-block;}
 .bok{background:var(--green-bg);color:var(--green);}.bwarn{background:var(--amber-bg);color:var(--amber);}
@@ -89,49 +113,52 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 .tbl tfoot td{background:#0F172A;color:#fff;font-weight:600;padding:11px 12px;}
 .tbl tfoot td.r{font-family:'DM Mono',monospace;}
 .vpos{color:var(--red);font-weight:500;}.vneg{color:var(--green);font-weight:500;}.vzero{color:var(--muted);}
-.cellinput{width:84px;border:1px solid #E2E8F0;border-radius:5px;padding:5px 7px;font-family:'DM Mono',monospace;font-size:12px;text-align:right;outline:none;}
-.cellinput:focus{border-color:var(--accent);}
 .tbl-wrap{background:#fff;border:var(--border);border-radius:10px;overflow-x:auto;}
 
 .chart-box{position:relative;height:260px;}
 .chart-box.short{height:230px;}
 
-.note{font-size:11px;color:var(--muted);background:var(--blue-bg);border:1px solid #DBEAFE;border-radius:9px;padding:11px 14px;line-height:1.55;}
+.note{font-size:11px;color:var(--muted);background:var(--blue-bg);border:1px solid #DBEAFE;border-radius:9px;padding:13px 16px;line-height:1.6;}
 .note b{color:var(--accent);font-weight:600;}
-
-/* levers + flags */
-.lever{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border:var(--border);border-radius:9px;background:#fff;}
-.lever input[type=checkbox]{margin-top:3px;width:15px;height:15px;accent-color:var(--accent);cursor:pointer;}
-.lever-main{flex:1;}
-.lever-t{font-size:12.5px;font-weight:500;}
-.lever-d{font-size:11px;color:var(--muted);margin-top:2px;}
-.lever-save{font-family:'DM Mono',monospace;font-size:13px;color:var(--green);font-weight:500;white-space:nowrap;}
-.flag{display:flex;gap:11px;padding:12px 14px;border:var(--border);border-left:3px solid var(--amber);border-radius:9px;background:#fff;}
-.flag.high{border-left-color:var(--red);}
-.flag-ico{width:26px;height:26px;border-radius:7px;background:var(--amber-bg);color:var(--amber);display:flex;align-items:center;justify-content:center;font-weight:600;flex-shrink:0;}
-.flag.high .flag-ico{background:var(--red-bg);color:var(--red);}
-.flag-t{font-size:12.5px;font-weight:500;}
-.flag-d{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.45;}
 .connect-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .btn{font-size:12px;border-radius:7px;padding:8px 14px;cursor:pointer;font-weight:500;font-family:inherit;border:var(--border);background:#fff;color:var(--text);}
 .btn.pri{background:var(--accent);color:#fff;border:none;}
 .stub{font-size:11px;color:var(--subtle);}
-.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-.scope{font-size:11px;color:var(--muted);}
+
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--navy-800);color:#fff;padding:11px 20px;border-radius:8px;font-size:12px;opacity:0;pointer-events:none;transition:.25s;z-index:90;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+.toast.err{background:var(--red);}
+
 @media(max-width:880px){.kpi-grid{grid-template-columns:1fr 1fr;}.two,.grid-2{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
-<div class="app">
+
+<!-- LOGIN -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-card">
+    <div class="login-logo">KBS</div>
+    <div class="login-sub">FP&amp;A Dashboard</div>
+    <label for="loginEmail">Email</label>
+    <input type="email" id="loginEmail" autocomplete="username" placeholder="you@kbs-services.com">
+    <label for="loginPass">Password</label>
+    <input type="password" id="loginPass" autocomplete="current-password" placeholder="••••••••">
+    <button class="login-btn" id="loginBtn">Sign in</button>
+    <div class="login-err" id="loginError"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div class="app" id="appShell" style="display:none;">
   <nav class="nav">
     <div class="nav-logo">
       <div class="nav-logo-name">KBS</div>
-      <div class="nav-logo-sub">FP&amp;A Workspace v2</div>
+      <div class="nav-logo-sub">FP&amp;A Dashboard</div>
     </div>
     <div class="nav-sec">Department</div>
     <div class="nav-item active" style="cursor:default">
       <svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
-      Field Operations
+      <span id="navDeptLabel">Department</span>
     </div>
     <div class="nav-sec">Views</div>
     <div class="nav-item active" data-tab="pnl" onclick="showTab('pnl',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V3M2 13h12M4 10v1M7 7v4M10 5v6M13 8v3"/></svg>P&amp;L</div>
@@ -140,22 +167,32 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
     <div class="nav-item" data-tab="te" onclick="showTab('te',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5z"/><path d="M5 5V3a3 3 0 0 1 6 0v2"/></svg>T&amp;E</div>
     <div class="nav-item" data-tab="budget" onclick="showTab('budget',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 6h12M6 6v8"/></svg>Budget</div>
     <div class="nav-item" data-tab="scenario" onclick="showTab('scenario',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3v10h10"/><path d="M3 11l3-3 2 2 5-5"/></svg>Scenario</div>
-    <div class="nav-foot">Prototype on sample data. Wire to RDB, Workday and Concur per tab.</div>
+    <div class="nav-foot">
+      <div class="nf-lbl">Period</div>
+      <div class="nf-val"><span class="live-dot"></span>FY26 · YTD May</div>
+      <div class="nf-lbl">Reviewer</div>
+      <div class="nf-val" id="navReviewer">—</div>
+    </div>
   </nav>
 
   <div class="main">
     <div class="topbar">
       <div class="topbar-left">
-        <select class="psel"><option>1020 · Field Operations</option></select>
+        <select class="psel" id="deptSelect" onchange="switchDept(this.value)"><option>Department</option></select>
         <select class="psel"><option>FY2026</option></select>
+        <span class="sync-badge" id="connBadge"><span class="live-dot"></span>Connecting…</span>
       </div>
-      <span class="proto-pill">PROTOTYPE · sample data</span>
+      <div class="topbar-right">
+        <span class="tb-user" id="topbarUser"></span>
+        <span class="tb-avatar" id="topbarAvatar"></span>
+        <button class="tb-signout" id="signOutBtn">Sign out</button>
+      </div>
     </div>
 
     <div class="content">
       <div>
         <div class="page-title" id="pageTitle">Department P&amp;L</div>
-        <div class="page-sub" id="pageSub">Field Operations · FY2026 · through May close</div>
+        <div class="page-sub" id="pageSub">—</div>
       </div>
 
       <div class="tabs">
@@ -174,16 +211,14 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
           <button data-v="ytd">Year-to-Date</button>
         </div>
         <div class="kpi-grid" id="pnlKpis"></div>
-        <div class="tbl-wrap">
-          <table class="tbl" id="pnlTable"></table>
-        </div>
+        <div class="tbl-wrap"><table class="tbl" id="pnlTable"></table></div>
         <div class="two">
           <div class="card">
-            <div class="card-header"><div><div class="card-title">Monthly Operating Cost</div><div class="card-sub">COR + OpEx · Jan–May 2026</div></div></div>
+            <div class="card-header"><div><div class="card-title">Monthly Operating Cost</div><div class="card-sub">Jan–May 2026</div></div></div>
             <div class="card-body"><div class="chart-box short"><canvas id="pnlBar"></canvas></div></div>
           </div>
           <div class="card">
-            <div class="card-header"><div><div class="card-title">Cost Mix</div><div class="card-sub">YTD · top subcategories</div></div></div>
+            <div class="card-header"><div><div class="card-title">Cost Mix</div><div class="card-sub">YTD · by category</div></div></div>
             <div class="card-body"><div class="chart-box short"><canvas id="pnlDonut"></canvas></div></div>
           </div>
         </div>
@@ -192,35 +227,18 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
       <!-- TAB 2 PAYROLL -->
       <div class="panel" id="panel-payroll">
         <div class="kpi-grid" id="payKpis"></div>
-        <div class="seg" id="paySeg">
-          <button class="active" data-c="salaried">Salaried</button>
-          <button data-c="hourly">Hourly</button>
-        </div>
         <div class="card">
-          <div class="card-header">
-            <div><div class="card-title" id="payTblTitle">Employee Details · Salaried</div><div class="card-sub">Leaders edit planned term and merit % to drive the forecast</div></div>
-            <span class="badge bmuted">Sample roster</span>
-          </div>
+          <div class="card-header"><div><div class="card-title">Labor Cost by Line</div><div class="card-sub">From the GL · this department, scoped</div></div><span class="badge binfo">Live</span></div>
           <div class="card-body" style="padding:0;"><div style="overflow-x:auto"><table class="tbl" id="payTable"></table></div></div>
         </div>
-        <div class="grid-2">
-          <div class="card">
-            <div class="card-header"><div><div class="card-title">Headcount Roll-forward</div><div class="card-sub">Beginning to ending headcount · actual Jan–May, forecast Jun–Dec</div></div></div>
-            <div class="card-body" style="padding:0;"><div style="overflow-x:auto"><table class="tbl" id="hcTable"></table></div></div>
-          </div>
-          <div class="card">
-            <div class="card-header"><div><div class="card-title">Compensation Summary</div><div class="card-sub" id="compSub">Flows to Direct &amp; Indirect Labor on the P&amp;L</div></div></div>
-            <div class="card-body" style="padding:0;"><table class="tbl" id="compTable"></table></div>
-          </div>
-        </div>
-        <div class="note" id="payNote"></div>
+        <div class="note" id="payRosterNote"></div>
       </div>
 
       <!-- TAB 3 VENDORS -->
       <div class="panel" id="panel-vendors">
         <div class="kpi-grid" id="venKpis"></div>
         <div class="card">
-          <div class="card-header"><div><div class="card-title">External Vendor Spend</div><div class="card-sub">Monthly, YTD and annualized run-rate per vendor</div></div><span class="badge bmuted">Sample vendors</span></div>
+          <div class="card-header"><div><div class="card-title">External Vendor Spend</div><div class="card-sub">Monthly, YTD and annualized run-rate · highest first</div></div><span class="badge binfo">Live</span></div>
           <div class="card-body" style="padding:0;"><div style="overflow-x:auto"><table class="tbl" id="venTable"></table></div></div>
         </div>
         <div class="card">
@@ -231,38 +249,22 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 
       <!-- TAB 4 T&E -->
       <div class="panel" id="panel-te">
-        <div class="connect-row">
-          <button class="btn pri" onclick="alert('Concur connect is a stub in this prototype. See the chat for the integration path.')">Connect Concur</button>
-          <span class="stub">Not connected · committed (pre-booked) travel shown from sample data</span>
-        </div>
         <div class="kpi-grid" id="teKpis"></div>
         <div class="card">
-          <div class="card-header"><div><div class="card-title">Monthly Budget vs Actual + Committed</div><div class="card-sub">Future months show pre-booked travel against budget, so remaining is what is truly left</div></div></div>
-          <div class="card-body"><div class="chart-box"><canvas id="teBar"></canvas></div></div>
+          <div class="card-header"><div><div class="card-title">T&amp;E by GL Line</div><div class="card-sub">Monthly and YTD · this department</div></div><span class="badge binfo">Live</span></div>
+          <div class="card-body" style="padding:0;"><div style="overflow-x:auto"><table class="tbl" id="teTable"></table></div></div>
         </div>
-        <div class="grid-2">
-          <div class="card">
-            <div class="card-header"><div><div class="card-title">By GL Account · YTD</div></div></div>
-            <div class="card-body" style="padding:0;"><table class="tbl" id="teGl"></table></div>
-          </div>
-          <div class="card">
-            <div class="card-header"><div><div class="card-title">Regional Rollup</div><div class="card-sub">RVP regions consolidating into the EVP budget</div></div></div>
-            <div class="card-body" style="padding:0;"><table class="tbl" id="teRegion"></table></div>
-          </div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Monthly T&amp;E Trend</div><div class="card-sub">Actual · Jan–May</div></div></div>
+          <div class="card-body"><div class="chart-box"><canvas id="teBar"></canvas></div></div>
         </div>
       </div>
 
       <!-- TAB 5 BUDGET -->
       <div class="panel" id="panel-budget">
-        <div class="seg" id="budSeg">
-          <button class="active" data-v="AOP">AOP</button>
-          <button data-v="4+8">4+8</button>
-          <button data-v="6+6">6+6</button>
-          <button data-v="8+4">8+4</button>
-        </div>
         <div class="kpi-grid" id="budKpis"></div>
         <div class="card">
-          <div class="card-header"><div><div class="card-title" id="budChartTitle">AOP vs Reforecast</div><div class="card-sub">Actuals carried in each reforecast; forecast for the balance of year</div></div></div>
+          <div class="card-header"><div><div class="card-title">Actuals + Run-rate</div><div class="card-sub">Actual Jan–May, run-rate Jun–Dec</div></div><span class="badge bwarn">Baseline only</span></div>
           <div class="card-body"><div class="chart-box"><canvas id="budBar"></canvas></div></div>
         </div>
         <div class="note" id="budNote"></div>
@@ -271,381 +273,14 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
       <!-- TAB 6 SCENARIO -->
       <div class="panel" id="panel-scenario">
         <div class="kpi-grid" id="scnKpis"></div>
-        <div class="grid-2">
-          <div class="card">
-            <div class="card-header"><div><div class="card-title">Levers · stick to plan</div><div class="card-sub">Toggle actions to close the gap to AOP</div></div></div>
-            <div class="card-body" style="display:flex;flex-direction:column;gap:10px;" id="scnLevers"></div>
-          </div>
-          <div class="card">
-            <div class="card-header"><div><div class="card-title">AI FP&amp;A flags</div><div class="card-sub">Anomalies and likely double-counting the agent surfaced</div></div><span class="badge bwarn" id="flagCount"></span></div>
-            <div class="card-body" style="display:flex;flex-direction:column;gap:10px;" id="scnFlags"></div>
-          </div>
-        </div>
-        <div class="note">In production the agent runs server-side across the consolidated payroll, vendor and T&amp;E data and flags duplicative or double-dipped spend. Findings here are illustrative.</div>
+        <div class="note" id="scnNote"></div>
       </div>
 
     </div>
   </div>
 </div>
 
-<script>
-const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const ACT = 5; // actuals through May
-const fmt = n => (n<0?'-$':'$') + Math.abs(Math.round(n)).toLocaleString();
-const fmtK = n => Math.abs(n)>=1000 ? '$'+(n/1000).toFixed(0)+'K' : '$'+Math.round(n);
-const fmtM = n => '$'+(n/1e6).toFixed(2)+'M';
-
-// ============ TAB 1: P&L by subcategory (real subcategories, sample $) ============
-// [name, section, mtdActual, mtdBudget].  Sections: REVENUE, COR, OPEX, ADDBACK, BELOW.
-// Subcategories and their section come straight from the GL map.
-const PL = [
-  ['Sales','REVENUE',1300000,1280000],
-  ['Direct Labor','COR',720000,700000],
-  ['Subcontractor expenses','COR',150000,140000],
-  ['Supplies','COR',70000,66000],
-  ['Temporary labor','COR',55000,45000],
-  ['Other COR','COR',18000,18000],
-  ['Other Insurance','COR',30000,28000],
-  ['Indirect Labor','OPEX',95000,92000],
-  ['Commissions','OPEX',21000,20000],
-  ['Advertising and Marketing','OPEX',6000,7000],
-  ['Professional services','OPEX',11000,9000],
-  ['IT and Software','OPEX',16000,15000],
-  ['Facilities','OPEX',22000,22000],
-  ['Utilities','OPEX',9000,9500],
-  ['Office supplies','OPEX',3000,3200],
-  ['T&E','OPEX',13000,14000],
-  ['General and other','OPEX',8000,6000],
-  ['Bad Debt','OPEX',4000,2000],
-  ['Management Addback','ADDBACK',15000,15000],
-  ['D&A','BELOW',17000,17000],
-  ['Interest','BELOW',6000,6000],
-  ['Other (income) / expense','BELOW',-1000,0],
-  ['Income Tax','BELOW',3000,3000],
-];
-const PL_MONTHLY = [1230000,1218000,1252000,1261000,1251000]; // total operating cost (COR+OpEx) Jan-May
-let plView = 'mtd';
-
-function plVal(line){ const m = plView==='mtd'?1:5; return {name:line[0],sec:line[1],a:line[2]*m,b:line[3]*m}; }
-
-function renderPnl(){
-  const rows = PL.map(plVal);
-  const sumA = s => rows.filter(r=>r.sec===s).reduce((t,r)=>t+r.a,0);
-  const sumB = s => rows.filter(r=>r.sec===s).reduce((t,r)=>t+r.b,0);
-  const rev=sumA('REVENUE'), revB=sumB('REVENUE');
-  const cor=sumA('COR'), corB=sumB('COR');
-  const opex=sumA('OPEX'), opexB=sumB('OPEX');
-  const add=sumA('ADDBACK'), addB=sumB('ADDBACK');
-  const below=sumA('BELOW'), belowB=sumB('BELOW');
-  const gp=rev-cor, gpB=revB-corB;
-  const ebitda=gp-opex, ebitdaB=gpB-opexB;
-  const adj=ebitda+add, adjB=ebitdaB+addB;
-  const net=ebitda-below, netB=ebitdaB-belowB;
-  const pm=(n,d)=> d? (n/d*100).toFixed(1)+'%' : '–';
-
-  document.getElementById('pnlKpis').innerHTML = [
-    {l:'Revenue',v:fmt(rev),s:plView==='mtd'?'May 2026':'YTD Jan–May'},
-    {l:'Gross Profit',v:fmt(gp),s:pm(gp,rev)+' margin'},
-    {l:'EBITDA',v:fmt(ebitda),s:pm(ebitda,rev)+' margin'},
-    {l:'Adjusted EBITDA',v:fmt(adj),s:pm(adj,rev)+' margin'},
-  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
-
-  const per = plView==='mtd'?'May 2026':'YTD';
-  const lineRow = r => {
-    const v=r.a-r.b;
-    const fav = r.sec==='REVENUE' ? v>=0 : v<=0;    // revenue up = good; cost down = good
-    const vc = Math.abs(v)<1?'vzero':(fav?'vneg':'vpos');
-    const op = r.b ? (v/Math.abs(r.b))*100 : 0;
-    const st = Math.abs(op)<2?'<span class="badge bmuted">On Plan</span>':(fav?'<span class="badge bok">Fav</span>':'<span class="badge brisk">Unfav</span>');
-    return `<tr><td>${r.name}</td><td class="r strong">${fmt(r.a)}</td><td class="r dim">${fmt(r.b)}</td><td class="r ${vc}">${v>=0?'+':''}${fmt(v)}</td><td>${st}</td></tr>`;
-  };
-  const subRow = (label,a,b) => {
-    const v=a-b, vc = Math.abs(v)<1?'vzero':(v>=0?'vneg':'vpos');
-    return `<tr class="sub"><td class="strong">${label}</td><td class="r">${fmt(a)}</td><td class="r">${fmt(b)}</td><td class="r ${vc}">${v>=0?'+':''}${fmt(v)}</td><td></td></tr>`;
-  };
-  const sec = s => rows.filter(r=>r.sec===s).map(lineRow).join('');
-
-  let h = `<thead><tr><th>Line</th><th class="r">${per} Actual</th><th class="r">Budget</th><th class="r">Variance</th><th>Status</th></tr></thead><tbody>`;
-  h += `<tr class="grp"><td colspan="5">Revenue</td></tr>` + sec('REVENUE');
-  h += `<tr class="grp"><td colspan="5">Cost of Revenue</td></tr>` + sec('COR') + subRow('Gross Profit',gp,gpB);
-  h += `<tr class="grp"><td colspan="5">Operating Expenses</td></tr>` + sec('OPEX') + subRow('EBITDA',ebitda,ebitdaB);
-  h += `<tr class="grp"><td colspan="5">Adjusted EBITDA add-backs</td></tr>` + sec('ADDBACK') + subRow('Adjusted EBITDA (memo)',adj,adjB);
-  h += `<tr class="grp"><td colspan="5">Below the Line</td></tr>` + sec('BELOW');
-  const nv=net-netB, nvc=nv>=0?'vneg':'vpos';
-  h += `</tbody><tfoot><tr><td>Net Income</td><td class="r">${fmt(net)}</td><td class="r">${fmt(netB)}</td><td class="r ${nvc}">${nv>=0?'+':''}${fmt(nv)}</td><td></td></tr></tfoot>`;
-  document.getElementById('pnlTable').innerHTML = h;
-}
-let pnlBar, pnlDonut;
-function renderPnlCharts(){
-  if(pnlBar) pnlBar.destroy();
-  pnlBar = new Chart(document.getElementById('pnlBar'),{type:'bar',
-    data:{labels:months.slice(0,ACT),datasets:[{data:PL_MONTHLY,backgroundColor:'#1A56A0',borderRadius:4,barThickness:34}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(c.parsed.y)}}},scales:{y:{ticks:{callback:v=>fmtK(v)},grid:{color:'#F1F5F9'}},x:{grid:{display:false}}}}});
-  // cost mix donut: COR + OpEx subcategories (YTD)
-  const yt = PL.filter(l=>l[1]==='COR'||l[1]==='OPEX').map(l=>({name:l[0],v:l[2]*5})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);
-  const top = yt.slice(0,7); const other = yt.slice(7).reduce((s,x)=>s+x.v,0);
-  const labels = top.map(x=>x.name).concat(other>0?['Other']:[]); const data = top.map(x=>x.v).concat(other>0?[other]:[]);
-  const colors = ['#1A56A0','#2E6FCC','#1A7A4A','#6B21A8','#B91C1C','#B45309','#0E7490','#94A3B8'];
-  if(pnlDonut) pnlDonut.destroy();
-  pnlDonut = new Chart(document.getElementById('pnlDonut'),{type:'doughnut',
-    data:{labels,datasets:[{data,backgroundColor:colors,borderColor:'#fff',borderWidth:2}]},
-    options:{responsive:true,maintainAspectRatio:false,cutout:'60%',plugins:{legend:{position:'bottom',labels:{boxWidth:9,padding:8,font:{size:9}}},tooltip:{callbacks:{label:c=>`${c.label}: ${fmt(c.parsed)}`}}}}});
-}
-
-// ============ TAB 2: PAYROLL (sample) ============
-const SAL = [ // id,name,title,hire,term,baseAnnual,bonusPct
-  ['E-1001','Marcus Webb','Area Operations Manager','2022-02-09','',142000,12],
-  ['E-1003','Luis Romero','Account Manager','2026-03-23','',118000,10],
-  ['E-1004','Priya Nair','Operations Analyst','2026-05-04','',92000,8],
-  ['E-1006','Bianca Lopez','Account Manager','2020-06-15','2026-07-08',121000,10],
-  ['E-1002','Renee Adler','Regional Manager','2026-08-03','',165000,15],
-];
-const HRLY = [ // id,name,title,hire,term,rate,hrsWk
-  ['H-2001','Tasha Greene','Site Supervisor','2026-03-02','',28.50,40],
-  ['H-2003','Sam Okafor','Site Supervisor','2024-05-10','2026-04-24',26.00,40],
-  ['H-2002','Devon Clarke','Site Supervisor','2026-06-15','',27.00,40],
-  ['H-2004','Kelly Pace','Site Supervisor','2026-10-19','',27.50,40],
-];
-let payClass='salaried', merit=3.0;
-const fmtD = d => d ? new Date(d+'T00:00:00').toLocaleDateString([], {month:'short',day:'numeric',year:'2-digit'}) : '—';
-function renderPay(){
-  // KPIs
-  const activeSal = SAL.filter(e=>!e[4]).length, activeHr = HRLY.filter(e=>!e[4]).length;
-  const planned = [...SAL,...HRLY].filter(e=>new Date(e[3]+'T00:00:00')>new Date('2026-05-31')).length;
-  const termd = [...SAL,...HRLY].filter(e=>e[4]).length;
-  document.getElementById('payKpis').innerHTML=[
-    {l:'Active Headcount',v:activeSal+activeHr,s:`${activeSal} salaried · ${activeHr} hourly`},
-    {l:'Planned Hires',v:planned,s:'Start date after May'},
-    {l:'Exits YTD/planned',v:termd,s:'Termed or future term'},
-    {l:'Merit Assumption',v:merit.toFixed(1)+'%',s:'Applied to forecast comp'},
-  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
-  // table
-  document.getElementById('payTblTitle').textContent = 'Employee Details · '+(payClass==='salaried'?'Salaried':'Hourly');
-  let h, b='';
-  if(payClass==='salaried'){
-    h=`<thead><tr><th>ID</th><th>Name</th><th>Title</th><th>Hire</th><th>Planned term</th><th class="r">Base</th><th class="r">Bonus %</th><th class="r">All-in</th><th>Status</th></tr></thead>`;
-    SAL.forEach((e,i)=>{
-      const allIn = e[5]*(1+e[6]/100);
-      const st = e[4]?'<span class="badge brisk">Exit</span>':(new Date(e[3]+'T00:00:00')>new Date('2026-05-31')?'<span class="badge bwarn">Planned</span>':'<span class="badge bok">Active</span>');
-      b+=`<tr><td class="dim">${e[0]}</td><td class="strong">${e[1]}</td><td>${e[2]}</td><td class="dim">${fmtD(e[3])}</td>
-      <td><input class="cellinput" style="width:120px;text-align:left" type="date" value="${e[4]}" onchange="setTerm('sal',${i},this.value)"></td>
-      <td class="r">${fmt(e[5])}</td><td class="r dim">${e[6]}%</td><td class="r strong">${fmt(allIn)}</td><td>${st}</td></tr>`;
-    });
-  } else {
-    h=`<thead><tr><th>ID</th><th>Name</th><th>Title</th><th>Hire</th><th>Planned term</th><th class="r">Rate</th><th class="r">Hrs/wk</th><th class="r">Annualized</th><th>Status</th></tr></thead>`;
-    HRLY.forEach((e,i)=>{
-      const ann = e[5]*e[6]*52;
-      const st = e[4]?'<span class="badge brisk">Exit</span>':(new Date(e[3]+'T00:00:00')>new Date('2026-05-31')?'<span class="badge bwarn">Planned</span>':'<span class="badge bok">Active</span>');
-      b+=`<tr><td class="dim">${e[0]}</td><td class="strong">${e[1]}</td><td>${e[2]}</td><td class="dim">${fmtD(e[3])}</td>
-      <td><input class="cellinput" style="width:120px;text-align:left" type="date" value="${e[4]}" onchange="setTerm('hr',${i},this.value)"></td>
-      <td class="r">$${e[5].toFixed(2)}</td><td class="r dim">${e[6]}</td><td class="r strong">${fmt(ann)}</td><td>${st}</td></tr>`;
-    });
-  }
-  document.getElementById('payTable').innerHTML = h+'<tbody>'+b+'</tbody>';
-  renderHc(); renderComp();
-  document.getElementById('payNote').innerHTML = `<b>How the forecast moves:</b> editing a planned term date drops that person from the forecast months after it, and the merit assumption lifts forecast salaries for the back half of the year. The compensation summary recomputes and is what posts to Direct, Indirect and Temporary Labor on the P&amp;L. Live version reads the roster from Workday and lets each leader edit only their own team.`;
-}
-function setTerm(t,i,val){ (t==='sal'?SAL:HRLY)[i][4]=val; renderPay(); }
-function renderHc(){
-  // sample roll-forward (monthly): beg, hires, tbhNew, tbhBackfill, attrition, end
-  const beg=[24,25,25,28,27,27,28,28,29,29,30,30];
-  const hires=[1,0,2,0,1,1,0,1,0,1,0,0];
-  const tbh=[0,0,0,0,0,0,1,0,1,0,1,0];
-  const attr=[0,0,1,1,0,0,1,0,0,0,1,0];
-  let end=[]; for(let i=0;i<12;i++){ end[i]= (i===0?beg[0]:end[i-1]) + hires[i]+tbh[i]-attr[i]; }
-  const rows=[['Beg headcount',beg],['(+) New hires',hires],['(+) TBHs / backfill',tbh],['(−) Attrition',attr.map(x=>-x)],['End headcount',end]];
-  let h=`<thead><tr><th>Movement</th>${months.map((m,i)=>`<th class="r" style="${i>=ACT?'color:var(--accent)':''}">${m}</th>`).join('')}</tr></thead><tbody>`;
-  rows.forEach(r=>{
-    const strong = (r[0]==='Beg headcount'||r[0]==='End headcount');
-    h+=`<tr${strong?' class="sub"':''}><td${strong?' class="strong"':''}>${r[0]}</td>${r[1].map(v=>`<td class="r ${v<0?'vneg':''}">${v===0?'<span class="dim">–</span>':(v>0&&!strong?'+':'')+v}</td>`).join('')}</tr>`;
-  });
-  h+='</tbody>';
-  document.getElementById('hcTable').innerHTML=h;
-}
-function renderComp(){
-  const m = 1+merit/100;
-  // annualized comp from active salaried + hourly, merit applied to forecast portion (approx: full year * blended)
-  const sal = SAL.filter(e=>!e[4]).reduce((s,e)=>s+e[5],0) + HRLY.filter(e=>!e[4]).reduce((s,e)=>s+e[5]*e[6]*52,0);
-  const salF = sal * (ACT/12 + (1-ACT/12)*m); // merit only on forecast months
-  const commission = 252000;
-  const bonus = SAL.filter(e=>!e[4]).reduce((s,e)=>s+e[5]*e[6]/100,0);
-  const directComp = salF+commission+bonus;
-  const benefits = salF*0.14, retire = salF*0.04, taxes = salF*0.0765;
-  const loaded = directComp+benefits+retire+taxes;
-  const rows=[['Salaries',salF],['Commission',commission],['Bonus',bonus],['Total Direct Comp',directComp,1],
-    ['Benefits',benefits],['401(k) / Pension',retire],['Taxes',taxes],['Total Loaded Comp',loaded,1]];
-  document.getElementById('compTable').innerHTML='<tbody>'+rows.map(r=>`<tr${r[2]?' class="sub"':''}><td${r[2]?' class="strong"':''}>${r[0]}</td><td class="r ${r[2]?'strong':''}">${fmt(r[1])}</td></tr>`).join('')+'</tbody>';
-  document.getElementById('compSub').innerHTML = `FY2026 annualized · merit ${merit.toFixed(1)}% on forecast months · posts to P&amp;L labor lines`;
-}
-let venBar, teBar, budBar;
-
-// ============ TAB 3: VENDORS (sample) ============
-const VEN=[ // name, category, mtd, ytd
-  ['Aramark','Subcontractor expenses',48000,242000],['ADP','Professional services',9500,47500],
-  ['Cintas','Supplies',7200,36800],['Grainger','Equipment & Repairs',11000,52000],
-  ['Microsoft','IT and Software',8800,44000],['Iron Mountain','Facilities',3100,15600],
-  ['SAP Concur','IT and Software',1900,9500],['Aon','Other Insurance',8000,40000],
-];
-function renderVen(){
-  const mtd=VEN.reduce((s,v)=>s+v[2],0), ytd=VEN.reduce((s,v)=>s+v[3],0);
-  document.getElementById('venKpis').innerHTML=[
-    {l:'Vendors',v:VEN.length,s:'With activity YTD'},{l:'May Spend',v:fmt(mtd),s:'Current month'},
-    {l:'YTD Spend',v:fmt(ytd),s:'Jan–May'},{l:'Annualized Run-rate',v:fmt(ytd/ACT*12),s:'YTD pace x12'},
-  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
-  const sorted=[...VEN].sort((a,b)=>b[3]-a[3]);
-  let h=`<thead><tr><th>Vendor</th><th>Category</th><th class="r">May</th><th class="r">YTD</th><th class="r">Run-rate</th></tr></thead><tbody>`;
-  sorted.forEach(v=>{h+=`<tr><td class="strong">${v[0]}</td><td class="dim">${v[1]}</td><td class="r">${fmt(v[2])}</td><td class="r strong">${fmt(v[3])}</td><td class="r dim">${fmt(v[3]/ACT*12)}</td></tr>`;});
-  h+=`</tbody><tfoot><tr><td>Total</td><td></td><td class="r">${fmt(mtd)}</td><td class="r">${fmt(ytd)}</td><td class="r">${fmt(ytd/ACT*12)}</td></tr></tfoot>`;
-  document.getElementById('venTable').innerHTML=h;
-}
-function renderVenChart(){
-  const sorted=[...VEN].sort((a,b)=>b[3]-a[3]);
-  if(venBar) venBar.destroy();
-  venBar=new Chart(document.getElementById('venBar'),{type:'bar',
-    data:{labels:sorted.map(v=>v[0]),datasets:[{data:sorted.map(v=>v[3]),backgroundColor:'#1A56A0',borderRadius:4,barThickness:18}]},
-    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(c.parsed.x)}}},scales:{x:{ticks:{callback:v=>fmtK(v)},grid:{color:'#F1F5F9'}},y:{grid:{display:false}}}}});
-}
-
-// ============ TAB 4: T&E (sample) ============
-const TE_BUD=[14000,14000,15000,15000,15000,15000,16000,14000,14000,16000,15000,18000];
-const TE_ACT=[12100,13400,15800,14200,13900,0,0,0,0,0,0,0];
-const TE_COMMIT=[0,0,0,0,0,8000,3500,1200,0,0,0,0]; // pre-booked in Concur for future months
-const TE_GL=[ ['60300','Travel - Per Diem',9200],['60301','Travel',31400],['60302','Mileage Reimbursement',7600],
-  ['60303','Meals / Ent',5100],['60304','Parking Expense',1900],['60305','T&E - miscellaneous',1200],
-  ['60307','Leased Vehicles',8400],['69000','SG&A Expense - Other',3600] ];
-const TE_REG=[ ['West RVP · M. Reyes',42000,38500],['Central RVP · D. Okafor',36000,40100],['East RVP · S. Lang',30000,28900] ];
-function renderTe(){
-  const ytdA=TE_ACT.reduce((s,v)=>s+v,0), ytdB=TE_BUD.slice(0,ACT).reduce((s,v)=>s+v,0);
-  const juneBud=TE_BUD[5], juneCommit=TE_COMMIT[5];
-  document.getElementById('teKpis').innerHTML=[
-    {l:'YTD T&E Actual',v:fmt(ytdA),s:'Jan–May'},
-    {l:'YTD vs Budget',v:(ytdA-ytdB>=0?'+':'')+fmt(ytdA-ytdB),d:`<span class="${ytdA-ytdB>0?'dn':'up'}">${ytdA-ytdB>0?'Over':'Under'} plan</span>`,s:''},
-    {l:'June Pre-booked',v:fmt(juneCommit),s:`of ${fmt(juneBud)} budget`},
-    {l:'June Remaining',v:fmt(juneBud-juneCommit),s:'Budget less committed'},
-  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div>${k.d?`<div class="kpi-delta">${k.d}</div>`:''}<div class="kpi-sub">${k.s}</div></div>`).join('');
-  // GL
-  const glTot=TE_GL.reduce((s,r)=>s+r[2],0);
-  document.getElementById('teGl').innerHTML=`<thead><tr><th>GL</th><th>Account</th><th class="r">YTD</th></tr></thead><tbody>`+
-    TE_GL.map(r=>`<tr><td class="dim">${r[0]}</td><td>${r[1]}</td><td class="r strong">${fmt(r[2])}</td></tr>`).join('')+
-    `</tbody><tfoot><tr><td></td><td>Total</td><td class="r">${fmt(glTot)}</td></tr></tfoot>`;
-  // Region
-  const rA=TE_REG.reduce((s,r)=>s+r[2],0), rB=TE_REG.reduce((s,r)=>s+r[1],0);
-  document.getElementById('teRegion').innerHTML=`<thead><tr><th>Region</th><th class="r">YTD Budget</th><th class="r">YTD Actual</th><th class="r">Var</th></tr></thead><tbody>`+
-    TE_REG.map(r=>{const v=r[2]-r[1];return `<tr><td>${r[0]}</td><td class="r dim">${fmt(r[1])}</td><td class="r strong">${fmt(r[2])}</td><td class="r ${v>0?'vpos':'vneg'}">${v>=0?'+':''}${fmt(v)}</td></tr>`;}).join('')+
-    `</tbody><tfoot><tr><td>EVP Total</td><td class="r">${fmt(rB)}</td><td class="r">${fmt(rA)}</td><td class="r">${rA-rB>=0?'+':''}${fmt(rA-rB)}</td></tr></tfoot>`;
-}
-function renderTeChart(){
-  if(teBar) teBar.destroy();
-  teBar=new Chart(document.getElementById('teBar'),{type:'bar',
-    data:{labels:months,datasets:[
-      {label:'Actual',data:TE_ACT.map(v=>v||null),backgroundColor:'#1A56A0',stack:'s',borderRadius:3},
-      {label:'Committed (pre-booked)',data:TE_COMMIT.map(v=>v||null),backgroundColor:'#7C3AED',stack:'s',borderRadius:3},
-      {label:'Budget',type:'line',data:TE_BUD,borderColor:'#B91C1C',borderWidth:2,pointRadius:3,pointBackgroundColor:'#B91C1C',fill:false,tension:.2,stepped:true}
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12,font:{size:11}}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt(c.parsed.y||0)}`}}},scales:{y:{stacked:true,ticks:{callback:v=>fmtK(v)},grid:{color:'#F1F5F9'}},x:{stacked:true,grid:{display:false}}}}});
-}
-
-// ============ TAB 5: BUDGET versions (sample) ============
-const AOP_MON=[780,780,790,800,800,810,815,810,805,815,820,860].map(x=>x*1000);
-const ACT_MON=[772,768,791,805,784].map(x=>x*1000); // actuals
-const VERS={
-  'AOP':{act:0,note:'Original annual operating plan presented to the Board.'},
-  '4+8':{act:4,note:'4 actuals + 8 forecast. First reforecast after Q1 close.'},
-  '6+6':{act:6,note:'6 actuals + 6 forecast. Mid-year reforecast (the standard June reset).'},
-  '8+4':{act:8,note:'8 actuals + 4 forecast. Reforecast after August close.'},
-};
-let budVer='AOP';
-function budSeries(v){
-  const a=VERS[v].act;
-  return AOP_MON.map((plan,i)=>{
-    if(v==='AOP') return plan;
-    if(i<a) return ACT_MON[i]!=null?ACT_MON[i]:plan; // actual where we have it
-    return Math.round(plan*1.012); // forecast drifts slightly over plan
-  });
-}
-function renderBud(){
-  const aop=AOP_MON.reduce((s,v)=>s+v,0);
-  const cur=budSeries(budVer).reduce((s,v)=>s+v,0);
-  const v=cur-aop;
-  document.getElementById('budKpis').innerHTML=[
-    {l:'AOP Full-Year',v:fmtM(aop),s:'Board plan'},
-    {l:budVer+' Full-Year',v:fmtM(cur),s:VERS[budVer].act?`${VERS[budVer].act} actual + ${12-VERS[budVer].act} fcst`:'Plan'},
-    {l:'Variance to AOP',v:(v>=0?'+':'')+fmtM(v),d:`<span class="${v>0?'dn':'up'}">${v>0?'Over':'Under'} plan</span>`,s:''},
-    {l:'% to AOP',v:((cur/aop-1)*100).toFixed(1)+'%',s:'Full-year'},
-  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div>${k.d?`<div class="kpi-delta">${k.d}</div>`:''}<div class="kpi-sub">${k.s}</div></div>`).join('');
-  document.getElementById('budChartTitle').textContent='AOP vs '+budVer;
-  document.getElementById('budNote').innerHTML=`<b>${budVer}:</b> ${VERS[budVer].note} Live version stores each locked version so leaders can compare any reforecast against the AOP and against each other.`;
-}
-function renderBudChart(){
-  if(budBar) budBar.destroy();
-  const cur=budSeries(budVer); const a=VERS[budVer].act;
-  budBar=new Chart(document.getElementById('budBar'),{type:'bar',
-    data:{labels:months,datasets:[
-      {label:'AOP',type:'line',data:AOP_MON,borderColor:'#94A3B8',borderWidth:2,borderDash:[5,4],pointRadius:0,fill:false,tension:.2},
-      {label:budVer+' Actual',data:cur.map((v,i)=>i<a?v:null),backgroundColor:'#1A56A0',borderRadius:3},
-      {label:budVer+' Forecast',data:cur.map((v,i)=>i>=a?v:null),backgroundColor:'#A8C0E8',borderRadius:3},
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12,font:{size:11}}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt(c.parsed.y||0)}`}}},scales:{y:{ticks:{callback:v=>fmtK(v)},grid:{color:'#F1F5F9'}},x:{grid:{display:false}}}}});
-}
-
-// ============ TAB 6: SCENARIO (sample) ============
-const LEVERS=[
-  {id:'l1',t:'Defer Regional Manager hire (Renee Adler, Aug)',d:'Holds an open req · removes ~5 months loaded comp',save:82000,on:false},
-  {id:'l2',t:'Trim discretionary vendor spend 10%',d:'Applies to non-essential vendor categories',save:64000,on:false},
-  {id:'l3',t:'Hold T&E to budget for the balance of year',d:'Removes the projected overage Jun–Dec',save:31000,on:false},
-  {id:'l4',t:'Convert 2 temp roles to attrition backfill',d:'Lowers temporary labor run-rate',save:96000,on:false},
-];
-const FLAGS=[
-  {sev:'high',t:'Likely vehicle double-dip · M. Webb',d:'Receives a $600/mo cell + vehicle allowance and also appears on Leased Vehicles (60307) with daily mileage reimbursement. Est. $9.6K/yr overlap.'},
-  {sev:'med',t:'Duplicate MRO vendors',d:'Grainger and a second supplier both billing equipment & repairs. Consolidating could capture volume pricing.'},
-  {sev:'med',t:'Professional services spike',d:'May Professional services 22% over plan on a single invoice. Confirm it is not a duplicate of an ADP charge.'},
-];
-const AOP_FY=AOP_MON.reduce((s,v)=>s+v,0);
-const PROJECTED=Math.round(AOP_FY*1.018); // current projection over plan
-function renderScn(){
-  const saved=LEVERS.filter(l=>l.on).reduce((s,l)=>s+l.save,0);
-  const proj=PROJECTED-saved; const gap=proj-AOP_FY;
-  document.getElementById('scnKpis').innerHTML=[
-    {l:'AOP Plan',v:fmtM(AOP_FY),s:'Target'},
-    {l:'Current Projection',v:fmtM(PROJECTED),d:`<span class="dn">▲ ${fmtM(PROJECTED-AOP_FY)} over</span>`,s:'Before levers'},
-    {l:'With Levers',v:fmtM(proj),d:`<span class="${gap>0?'dn':'up'}">${gap>0?'▲ '+fmtM(gap)+' over':'▼ on/under plan'}</span>`,s:`${fmtK(saved)} saved`},
-    {l:'Gap to Plan',v:(gap<=0?'On plan':fmtM(gap)),d:gap<=0?'<span class="up">Closed</span>':'<span class="dn">Remaining</span>',s:''},
-  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div>${k.d?`<div class="kpi-delta">${k.d}</div>`:''}<div class="kpi-sub">${k.s}</div></div>`).join('');
-  document.getElementById('scnLevers').innerHTML=LEVERS.map(l=>`<label class="lever"><input type="checkbox" ${l.on?'checked':''} onchange="toggleLever('${l.id}')"><div class="lever-main"><div class="lever-t">${l.t}</div><div class="lever-d">${l.d}</div></div><div class="lever-save">${fmtK(l.save)}</div></label>`).join('');
-  document.getElementById('scnFlags').innerHTML=FLAGS.map(f=>`<div class="flag ${f.sev==='high'?'high':''}"><div class="flag-ico">!</div><div><div class="flag-t">${f.t}</div><div class="flag-d">${f.d}</div></div></div>`).join('');
-  document.getElementById('flagCount').textContent=FLAGS.length+' flags';
-}
-function toggleLever(id){ const l=LEVERS.find(x=>x.id===id); l.on=!l.on; renderScn(); }
-
-// ============ NAV / LIFECYCLE ============
-const TITLES={pnl:['Department P&L','Consolidated by subcategory'],payroll:['Payroll','Roster, headcount and compensation'],
-  vendors:['Vendors','External vendor spend'],te:['Travel & Entertainment','Budget vs actual and committed'],
-  budget:['Budget','AOP and reforecast versions'],scenario:['Scenario','Plan to land on AOP']};
-const drawn={};
-function showTab(name,el){
-  document.querySelectorAll('.tab,.nav-item[data-tab]').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll(`.tab[data-tab="${name}"],.nav-item[data-tab="${name}"]`).forEach(e=>e.classList.add('active'));
-  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-  document.getElementById('panel-'+name).classList.add('active');
-  document.getElementById('pageTitle').innerHTML=TITLES[name][0];
-  document.getElementById('pageSub').textContent='Field Operations · '+TITLES[name][1];
-  // charts must draw while visible
-  if(name==='pnl') renderPnlCharts();
-  if(name==='vendors') renderVenChart();
-  if(name==='te') renderTeChart();
-  if(name==='budget') renderBudChart();
-}
-
-// segmented toggles
-document.querySelectorAll('#pnlSeg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#pnlSeg button').forEach(x=>x.classList.remove('active'));b.classList.add('active');plView=b.dataset.v;renderPnl();});
-document.querySelectorAll('#paySeg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#paySeg button').forEach(x=>x.classList.remove('active'));b.classList.add('active');payClass=b.dataset.c;renderPay();});
-document.querySelectorAll('#budSeg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#budSeg button').forEach(x=>x.classList.remove('active'));b.classList.add('active');budVer=b.dataset.v;renderBud();renderBudChart();});
-
-// initial render (non-chart content can render hidden)
-renderPnl(); renderPay(); renderVen(); renderTe(); renderBud(); renderScn();
-renderPnlCharts();
-window.addEventListener('resize',()=>{ const a=document.querySelector('.panel.active').id.replace('panel-','');
-  if(a==='pnl')renderPnlCharts(); if(a==='vendors')renderVenChart(); if(a==='te')renderTeChart(); if(a==='budget')renderBudChart(); });
-</script>
+<div class="toast" id="toast"></div>
+<script src="dashboard.js"></script>
 </body>
 </html>

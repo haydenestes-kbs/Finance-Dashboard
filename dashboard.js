@@ -78,9 +78,6 @@ let haydenMonthlyBenefit = Math.round(haydenMonthlySalary * benefitsRatio);
 let haydenLines = [];
 
 function buildHaydenLines(){
-  // The H. Estes lines are a finance (3020) example only; keep them out of
-  // every other department's forecast.
-  if (forecastDept() !== '3020'){ haydenLines = []; return; }
   haydenMonthlyBenefit = Math.round(haydenMonthlySalary * benefitsRatio);
   haydenLines = [
     { id:'hayden_salary',   label:'Salary — H. Estes',            cat:'payroll',  hayden:true, monthly: haydenMonthlySalary },
@@ -394,1119 +391,288 @@ function toast(msg, isErr){
 
 // =============================================================
 // TAB SWITCHING
-// =============================================================
-function showTab(name, el){
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
-  document.querySelectorAll('.nav-item[data-tab]').forEach(n=>n.classList.remove('active'));
-  document.querySelectorAll(`.tab[data-tab="${name}"], .nav-item[data-tab="${name}"]`).forEach(e=>e.classList.add('active'));
-  document.getElementById('panel-'+name).classList.add('active');
-  if (name==='workforce') wfRenderAll();
-}
+// ===== END REUSED BACKEND CORE =====
 
 // =============================================================
-// SPEND TAB
+// V2 RENDER LAYER — 6-tab structure on the real backend
+// Tabs: 1 P&L · 2 Payroll · 3 Vendors · 4 T&E · 5 Budget · 6 Scenario
+// Everything reads from the department-scoped lineItems / allLineItems.
+// Tabs without a real data source yet render an honest stub.
 // =============================================================
-let currentView = 'month';
 
-function lineActual(l, view){
-  return view==='month' ? l.actuals[CURRENT_MONTH_IDX] : ytd(l.actuals);
-}
-function lineBudget(l, view){
-  const a = avg(l.actuals);
-  return view==='month' ? a : a*ACTUAL_MONTHS;
-}
+let pnlView = 'mtd';   // 'mtd' (May) or 'ytd'
+let charts = {};       // keep chart instances so we can destroy before redraw
+function destroyChart(key){ if (charts[key]){ charts[key].destroy(); delete charts[key]; } }
 
-function catTotals(view){
-  const totals = {};
+// Cost section grouping for the P&L. We hold operating-cost actuals only (no
+// revenue feed yet), so the P&L is cost-focused: categories roll into COR/OpEx.
+const COR_CATS  = ['payroll','benefits','service'];          // cost of revenue / direct delivery
+const OPEX_CATS = ['prof','te','other'];                     // operating expenses
+function sectionForCat(cat){ return COR_CATS.includes(cat) ? 'COR' : 'OPEX'; }
+
+// Per-line actual for a period: month = May, ytd = Jan-May sum.
+function valFor(l, view){ return view==='mtd' ? l.actuals[CURRENT_MONTH_IDX] : ytd(l.actuals); }
+// Budget baseline = YTD monthly average (same basis the forecast uses).
+function budFor(l, view){ const a = avg(l.actuals); return view==='mtd' ? a : a*ACTUAL_MONTHS; }
+
+// ---- TAB 1: P&L ----------------------------------------------------------
+function renderPnl(){
+  const view = pnlView;
+  // group the scoped lines by category
+  const byCat = {};
   lineItems.forEach(l=>{
-    const c = l.cat;
-    totals[c] = totals[c] || { actual:0, budget:0 };
-    totals[c].actual += lineActual(l, view);
-    totals[c].budget += lineBudget(l, view);
+    const c = byCat[l.cat] || (byCat[l.cat] = { actual:0, budget:0 });
+    c.actual += valFor(l, view); c.budget += budFor(l, view);
   });
-  return totals;
-}
+  const cats = Object.keys(catMeta).filter(c=>byCat[c]);
+  const corA = cats.filter(c=>sectionForCat(c)==='COR').reduce((s,c)=>s+byCat[c].actual,0);
+  const corB = cats.filter(c=>sectionForCat(c)==='COR').reduce((s,c)=>s+byCat[c].budget,0);
+  const opexA = cats.filter(c=>sectionForCat(c)==='OPEX').reduce((s,c)=>s+byCat[c].actual,0);
+  const opexB = cats.filter(c=>sectionForCat(c)==='OPEX').reduce((s,c)=>s+byCat[c].budget,0);
+  const totA = corA+opexA, totB = corB+opexB;
 
-function pctVar(actual, budget){
-  if (budget === 0) return { txt:'—', cls:'fl' };
-  const pct = ((actual-budget)/Math.abs(budget))*100;
-  const cls = pct > 2 ? 'dn' : pct < -2 ? 'up' : 'fl';
-  const arrow = pct > 0 ? '▲' : pct < 0 ? '▼' : '—';
-  return { txt:`${arrow} ${Math.abs(pct).toFixed(1)}% vs. budget`, cls };
-}
-
-function renderSpend(){
-  const view = currentView;
-  const allActual = lineItems.reduce((s,l)=>s+lineActual(l,view),0);
-  const allBudget = lineItems.reduce((s,l)=>s+lineBudget(l,view),0);
-  const payrollActual = lineItems.filter(l=>l.cat==='payroll'||l.cat==='benefits'||l.cat==='other')
-    .reduce((s,l)=>s+lineActual(l,view),0);
-  const nonPayroll = allActual - payrollActual;
-
-  const periodLbl = view==='month' ? 'May 2026' : 'YTD Jan–May';
+  // KPIs: we have costs, not revenue, so frame around operating cost + variance.
+  const per = view==='mtd' ? 'May 2026' : 'YTD Jan–May';
   const kpis = [
-    { label:`Total Spend · ${view==='month'?'May':'YTD'}`, value:fmt(allActual), delta:pctVar(allActual,allBudget), sub:'All categories' },
-    { label:'Payroll & Labor', value:fmt(payrollActual), delta:null, sub:'Salary, benefits, labor' },
-    { label:'Non-Payroll', value:fmt(nonPayroll), delta:null, sub:'Vendors, service, T&E' },
-    { label:'Over / (Under) Budget', value:fmt(allActual-allBudget), delta:pctVar(allActual,allBudget), sub:periodLbl },
+    { l:'Total Operating Cost', v:fmt(totA), s:per },
+    { l:'Cost of Delivery', v:fmt(corA), s:`${totA?Math.round(corA/totA*100):0}% of cost` },
+    { l:'Operating Expense', v:fmt(opexA), s:`${totA?Math.round(opexA/totA*100):0}% of cost` },
+    { l:'Over / (Under) Budget', v:(totA-totB>=0?'+':'')+fmt(totA-totB),
+      s:`vs ${fmt(totB)} baseline`, cls:(totA-totB)>0?'dn':'up' },
   ];
-  document.getElementById('kpiRow').innerHTML = kpis.map(k=>`
-    <div class="kpi">
-      <div class="kpi-label">${k.label}</div>
-      <div class="kpi-val">${k.value}</div>
-      ${k.delta?`<div class="kpi-delta ${k.delta.cls}">${k.delta.txt}</div>`:'<div class="kpi-delta fl">&nbsp;</div>'}
-      <div class="kpi-sub">${k.sub}</div>
-    </div>`).join('');
+  document.getElementById('pnlKpis').innerHTML = kpis.map(k=>
+    `<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val ${k.cls||''}">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
 
-  // Category table
-  document.getElementById('catPeriodHead').textContent = view==='month' ? 'May 2026' : 'YTD';
-  document.getElementById('catSub').textContent = view==='month' ? 'May 2026 · Actuals vs. Budget' : 'Year-to-Date · Jan–May 2026';
-  const totals = catTotals(view);
-  const cats = Object.keys(catMeta).filter(c=>totals[c]);
-  document.getElementById('catCount').textContent = `${cats.length} categories`;
-  let body='', tA=0, tB=0;
-  cats.forEach(c=>{
-    const t = totals[c]; tA+=t.actual; tB+=t.budget;
-    const v = t.actual - t.budget;
-    const overPct = t.budget ? (v/Math.abs(t.budget))*100 : 0;
-    let sc,st;
-    if (overPct>5){sc='brisk';st='Over';} else if(overPct<-5){sc='bok';st='Under';} else {sc='bmuted';st='On Plan';}
-    const vc = v>0?'var-pos':v<0?'var-neg':'var-zero';
-    body += `<tr>
-      <td><span class="emp-name">${catMeta[c].label}</span></td>
-      <td class="num strong">${fmt(t.actual)}</td>
-      <td class="num dim">${fmt(t.budget)}</td>
-      <td class="num ${vc}">${v>=0?'+':''}${fmt(v)}</td>
-      <td><span class="badge ${sc}">${st}</span></td>
-    </tr>`;
-  });
-  document.getElementById('catTableBody').innerHTML = body;
-  document.getElementById('catTotalActual').textContent = fmt(tA);
-  document.getElementById('catTotalBudget').textContent = fmt(tB);
-  const tv = tA-tB, tvEl = document.getElementById('catTotalVar');
-  tvEl.textContent = (tv>=0?'+':'')+fmt(tv);
-  tvEl.className = 'num ' + (tv>0?'var-pos':'var-neg');
+  // table: section header, then each category line; subtotals for COR / OpEx
+  const lineRow = (label, a, b) => {
+    const v = a-b; const vc = Math.abs(v)<1?'vzero':(v<=0?'vneg':'vpos');
+    const op = b ? (v/Math.abs(b))*100 : 0;
+    const st = Math.abs(op)<2 ? '<span class="badge bmuted">On Plan</span>'
+             : (v<=0 ? '<span class="badge bok">Under</span>' : '<span class="badge brisk">Over</span>');
+    return `<tr><td>${label}</td><td class="r strong">${fmt(a)}</td><td class="r dim">${fmt(b)}</td><td class="r ${vc}">${v>=0?'+':''}${fmt(v)}</td><td>${st}</td></tr>`;
+  };
+  const subRow = (label,a,b)=>{ const v=a-b, vc=Math.abs(v)<1?'vzero':(v<=0?'vneg':'vpos');
+    return `<tr class="sub"><td class="strong">${label}</td><td class="r">${fmt(a)}</td><td class="r">${fmt(b)}</td><td class="r ${vc}">${v>=0?'+':''}${fmt(v)}</td><td></td></tr>`; };
+  const secLines = sec => cats.filter(c=>sectionForCat(c)===sec)
+    .sort((a,b)=>byCat[b].actual-byCat[a].actual)
+    .map(c=>lineRow(catMeta[c].label, byCat[c].actual, byCat[c].budget)).join('');
 
-  // Vendor detail (non-Employees lines), sorted highest dollar value first
-  document.getElementById('vendPeriodHead').textContent = view==='month'?'May 2026':'May 2026';
-  const vlines = lineItems.filter(l=> l.vendor!=='Employees' && l.vendor!=='Other')
-    .slice()
-    .sort((a,b)=> b.actuals[CURRENT_MONTH_IDX] - a.actuals[CURRENT_MONTH_IDX]);
-  let vbody='';
-  vlines.forEach(l=>{
-    vbody += `<tr>
-      <td><span class="emp-name">${l.vendor}</span></td>
-      <td class="dim">${l.label.split('·').pop().trim()}</td>
-      <td class="num strong">${fmt(l.actuals[CURRENT_MONTH_IDX])}</td>
-      <td class="num dim">${fmt(ytd(l.actuals))}</td>
-    </tr>`;
-  });
-  document.getElementById('vendTableBody').innerHTML = vbody;
+  let h = `<thead><tr><th>Cost Category</th><th class="r">${view==='mtd'?'May':'YTD'} Actual</th><th class="r">Budget</th><th class="r">Variance</th><th>Status</th></tr></thead><tbody>`;
+  h += `<tr class="grp"><td colspan="5">Cost of Delivery</td></tr>` + secLines('COR') + subRow('Total Cost of Delivery',corA,corB);
+  h += `<tr class="grp"><td colspan="5">Operating Expenses</td></tr>` + secLines('OPEX') + subRow('Total Operating Expense',opexA,opexB);
+  const tv = totA-totB, tvc = tv<=0?'vneg':'vpos';
+  h += `</tbody><tfoot><tr><td>Total Operating Cost</td><td class="r">${fmt(totA)}</td><td class="r">${fmt(totB)}</td><td class="r ${tvc}">${tv>=0?'+':''}${fmt(tv)}</td><td></td></tr></tfoot>`;
+  document.getElementById('pnlTable').innerHTML = h;
 }
 
-// =============================================================
-// CHARTS
-// =============================================================
-Chart.defaults.font.family = "'DM Sans', sans-serif";
-Chart.defaults.color = '#64748B';
-Chart.defaults.borderColor = '#E2E8F0';
-let mixChart, trendChart, teTrendChart, teCategoryChart, forecastChart;
+function renderPnlCharts(){
+  // monthly operating cost (all scoped lines summed per month)
+  const monthly = months.slice(0,ACTUAL_MONTHS).map((m,i)=> lineItems.reduce((s,l)=>s+l.actuals[i],0));
+  destroyChart('pnlBar');
+  charts.pnlBar = new Chart(document.getElementById('pnlBar'), { type:'bar',
+    data:{ labels:months.slice(0,ACTUAL_MONTHS), datasets:[{ data:monthly, backgroundColor:'#1A56A0', borderRadius:4, barThickness:34 }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>fmt(c.parsed.y) } } },
+      scales:{ y:{ ticks:{ callback:v=>fmtK(v) }, grid:{color:'#F1F5F9'} }, x:{ grid:{display:false} } } } });
 
-function renderMix(){
-  const totals = catTotals('ytd');
-  const labels = Object.keys(catMeta).filter(c=>totals[c]);
-  const data = labels.map(c=>totals[c].actual);
+  // cost mix donut: category YTD
+  const byCat = {};
+  lineItems.forEach(l=>{ byCat[l.cat] = (byCat[l.cat]||0) + ytd(l.actuals); });
+  const labels = Object.keys(byCat).filter(c=>byCat[c]>0).sort((a,b)=>byCat[b]-byCat[a]);
+  const data = labels.map(c=>byCat[c]);
   const colorMap = { payroll:'#1A56A0', benefits:'#2E6FCC', service:'#1A7A4A', prof:'#6B21A8', te:'#B91C1C', other:'#B45309' };
-  if (mixChart) mixChart.destroy();
-  mixChart = new Chart(document.getElementById('mixChart'), {
-    type:'doughnut',
-    data:{ labels:labels.map(c=>catMeta[c].label), datasets:[{ data, backgroundColor:labels.map(c=>colorMap[c]), borderColor:'#fff', borderWidth:2 }] },
-    options:{ responsive:true, maintainAspectRatio:false, cutout:'62%',
-      plugins:{ legend:{ position:'bottom', labels:{ boxWidth:9, boxHeight:9, padding:10, font:{size:10} } },
-        tooltip:{ callbacks:{ label:(c)=>`${c.label}: ${fmt(c.parsed)}` } } } }
-  });
+  destroyChart('pnlDonut');
+  charts.pnlDonut = new Chart(document.getElementById('pnlDonut'), { type:'doughnut',
+    data:{ labels:labels.map(c=>catMeta[c]?catMeta[c].label:c), datasets:[{ data, backgroundColor:labels.map(c=>colorMap[c]||'#94A3B8'), borderColor:'#fff', borderWidth:2 }] },
+    options:{ responsive:true, maintainAspectRatio:false, cutout:'60%', plugins:{ legend:{ position:'bottom', labels:{ boxWidth:9, padding:8, font:{size:9} } }, tooltip:{ callbacks:{ label:c=>`${c.label}: ${fmt(c.parsed)}` } } } } });
 }
 
-function monthlyTotals(){
-  return months.slice(0,ACTUAL_MONTHS).map((m,i)=> lineItems.reduce((s,l)=>s+l.actuals[i],0));
-}
-
-function renderTrend(){
-  const data = monthlyTotals();
-  if (trendChart) trendChart.destroy();
-  trendChart = new Chart(document.getElementById('trendChart'), {
-    type:'bar',
-    data:{ labels:months.slice(0,ACTUAL_MONTHS), datasets:[{ label:'Total Spend', data, backgroundColor:'#1A56A0', borderRadius:4, barThickness:36 }] },
-    options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=>fmt(c.parsed.y) } } },
-      scales:{ y:{ ticks:{ callback:(v)=>fmtK(v) }, grid:{color:'#F1F5F9'} }, x:{ grid:{display:false} } } }
-  });
-}
-
-// =============================================================
-// T&E TAB  (accounts 60301–60304)
-// =============================================================
-const teLineIds = ['travel','mileage_e','mileage_m','meals','parking'];
-function renderTE(){
-  const A = id => (lineItems.find(l=>l.id===id) || {actuals:[0,0,0,0,0]}).actuals;
-  const teLines = lineItems.filter(l=>teLineIds.includes(l.id));
-  // collapse the two mileage lines into one display row
-  const mileE = A('mileage_e'), mileM = A('mileage_m');
-  const display = [
-    { label:'60301 · Travel', vals: A('travel') },
-    { label:'60302 · Mileage Reimbursement', vals: mileE.map((v,i)=> v + (mileM[i]||0)) },
-    { label:'60303 · Meals / Ent', vals: A('meals') },
-    { label:'60304 · Parking', vals: A('parking') },
+// ---- TAB 2: PAYROLL ------------------------------------------------------
+// We have payroll/benefits COST TOTALS (real), but no employee roster yet.
+// Show the real cost totals; stub the roster with a connect-Workday note.
+function renderPayroll(){
+  const payLines = lineItems.filter(l=>l.cat==='payroll' || l.cat==='benefits');
+  const payYtd = payLines.filter(l=>l.cat==='payroll').reduce((s,l)=>s+ytd(l.actuals),0);
+  const benYtd = payLines.filter(l=>l.cat==='benefits').reduce((s,l)=>s+ytd(l.actuals),0);
+  const payMay = payLines.filter(l=>l.cat==='payroll').reduce((s,l)=>s+l.actuals[CURRENT_MONTH_IDX],0);
+  const loadedYtd = payYtd+benYtd;
+  const kpis = [
+    { l:'Payroll · May', v:fmt(payMay), s:'Salary, wages, OT' },
+    { l:'Payroll · YTD', v:fmt(payYtd), s:'Jan–May' },
+    { l:'Benefits & Taxes · YTD', v:fmt(benYtd), s:payYtd?`${Math.round(benYtd/payYtd*100)}% of payroll`:'—' },
+    { l:'Loaded Labor · YTD', v:fmt(loadedYtd), s:'Payroll + benefits' },
   ];
-  let body='';
-  display.forEach(d=>{
-    const total = ytd(d.vals);
-    body += `<tr>
-      <td><span class="emp-name">${d.label}</span></td>
-      ${d.vals.map(v=>`<td class="num">${v===0?'<span class="dim">–</span>':fmt(v)}</td>`).join('')}
-      <td class="num strong">${fmt(total)}</td>
-    </tr>`;
-  });
-  document.getElementById('teTableBody').innerHTML = body;
+  document.getElementById('payKpis').innerHTML = kpis.map(k=>
+    `<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
 
-  const teYtd = teLines.reduce((s,l)=>s+ytd(l.actuals),0);
-  // T&E budget baseline = avg monthly of the YTD T&E run-rate
-  const teBudgetYtd = Math.round(teYtd); // budget == actual baseline since these are the source numbers
-  document.getElementById('teYtdTotal').textContent = fmt(teYtd);
-  document.getElementById('teBudget').textContent = fmt(teBudgetYtd);
-  document.getElementById('teBudgetSub').textContent = 'YTD baseline · Jan–May';
-  const v = teYtd - teBudgetYtd;
-  document.getElementById('teVariance').textContent = (v>=0?'+':'')+fmt(v);
-  document.getElementById('teVarDelta').innerHTML = v>0?'<span class="dn">▲ Over baseline</span>':'<span class="up">▼ On baseline</span>';
-  // largest line
-  const sorted = display.map(d=>({label:d.label, total:ytd(d.vals)})).sort((a,b)=>b.total-a.total);
-  document.getElementById('teTopLine').textContent = sorted[0].label.split('·').pop().trim();
-  document.getElementById('teTopAmt').textContent = fmt(sorted[0].total)+' YTD';
+  // Real monthly labor cost table (what we DO have)
+  let rows = payLines.sort((a,b)=>ytd(b.actuals)-ytd(a.actuals)).map(l=>
+    `<tr><td class="strong">${l.label}</td><td class="dim">${catMeta[l.cat]?catMeta[l.cat].label:l.cat}</td>`+
+    l.actuals.map(v=>`<td class="r">${v?fmt(v):'<span class="dim">–</span>'}</td>`).join('')+
+    `<td class="r strong">${fmt(ytd(l.actuals))}</td></tr>`).join('');
+  document.getElementById('payTable').innerHTML =
+    `<thead><tr><th>Labor Line</th><th>Category</th>${months.slice(0,ACTUAL_MONTHS).map(m=>`<th class="r">${m}</th>`).join('')}<th class="r">YTD</th></tr></thead><tbody>${rows||''}</tbody>`;
 
-  renderTETrend(display);
-  renderTECategory(display);
+  // Roster stub — we have totals, not per-employee detail
+  document.getElementById('payRosterNote').innerHTML =
+    `<b>Employee roster — not connected.</b> This department's payroll <em>totals</em> above are live from the GL. `+
+    `Per-employee detail (roster, hire/term dates, merit planning, headcount roll-forward) needs a feed from the HR system. `+
+    `Once Workday or the payroll export is wired in, the roster and headcount roll-forward render here and drive the forecast.`;
 }
 
-function renderTETrend(display){
-  const monthly = months.slice(0,ACTUAL_MONTHS).map((m,i)=> display.reduce((s,d)=>s+d.vals[i],0));
-  if (teTrendChart) teTrendChart.destroy();
-  teTrendChart = new Chart(document.getElementById('teTrendChart'), {
-    type:'line',
-    data:{ labels:months.slice(0,ACTUAL_MONTHS), datasets:[{ label:'Actual T&E', data:monthly, borderColor:'#1A56A0', backgroundColor:'rgba(26,86,160,0.08)', fill:true, tension:0.3, pointRadius:4, pointBackgroundColor:'#1A56A0', pointBorderColor:'#fff', pointBorderWidth:2, borderWidth:2 }] },
-    options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=>fmt(c.parsed.y) } } },
-      scales:{ y:{ ticks:{ callback:(v)=>fmtK(v) }, grid:{color:'#F1F5F9'}, beginAtZero:true }, x:{ grid:{display:false} } } }
-  });
-}
+// ---- TAB 3: VENDORS ------------------------------------------------------
+// Real: external (non-payroll) vendor lines, sorted high to low.
+function renderVendors(){
+  const vlines = lineItems.filter(l=> l.vendor && l.vendor!=='Employees' && l.vendor!=='Consolidated' && l.cat!=='payroll' && l.cat!=='benefits')
+    .slice().sort((a,b)=> ytd(b.actuals)-ytd(a.actuals));
+  const consolidatedMode = (activeDept === '__ALL__');
 
-function renderTECategory(display){
-  const labels = display.map(d=>d.label.split('·').pop().trim());
-  const data = display.map(d=>ytd(d.vals));
-  const colors = ['#1A56A0','#1A7A4A','#6B21A8','#B45309'];
-  if (teCategoryChart) teCategoryChart.destroy();
-  teCategoryChart = new Chart(document.getElementById('teCategoryChart'), {
-    type:'bar',
-    data:{ labels, datasets:[{ data, backgroundColor:colors, borderRadius:4, barThickness:22 }] },
-    options:{ responsive:true, maintainAspectRatio:false, indexAxis:'y',
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=>fmt(c.parsed.x) } } },
-      scales:{ x:{ ticks:{ callback:(v)=>fmtK(v) }, grid:{color:'#F1F5F9'} }, y:{ grid:{display:false} } } }
-  });
-}
+  const mtd = vlines.reduce((s,l)=>s+l.actuals[CURRENT_MONTH_IDX],0);
+  const vYtd = vlines.reduce((s,l)=>s+ytd(l.actuals),0);
+  const kpis = [
+    { l:'Vendor Lines', v:vlines.length, s:'With YTD activity' },
+    { l:'May Spend', v:fmt(mtd), s:'Current month' },
+    { l:'YTD Spend', v:fmt(vYtd), s:'Jan–May' },
+    { l:'Annualized Run-rate', v:fmt(vYtd/ACTUAL_MONTHS*12), s:'YTD pace x12' },
+  ];
+  document.getElementById('venKpis').innerHTML = kpis.map(k=>
+    `<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
 
-// =============================================================
-// FORECAST EDITOR  (line × month grid, editable Jun–Dec, comments per cell)
-// =============================================================
-function getForecastRows(){
-  // fixed display order of the base line ids
-  const baseOrder = ['salary','hayden_salary','benefits','hayden_benefits','anthem',
-                     'ccsi','accordion','shankly',
-                     'travel','mileage_e','mileage_m','meals','parking',
-                     'fed_unemp','hourly','overtime','bonus','vacation','supplies'];
-
-  const rows = [];
-  SECTIONS.forEach(sec=>{
-    rows.push({ section:sec.label, key:sec.key });
-    // base + hayden lines for this section, kept in baseOrder
-    baseOrder.forEach(id=>{
-      const l = lineById(id);
-      if (l && sec.cats.includes(l.cat)) rows.push(id);
-    });
-    // requisition lines that fall in this section (payroll/benefits → Wages)
-    reqLines.forEach(l=>{ if (sec.cats.includes(l.cat)) rows.push(l.id); });
-    // custom lines Ben added to this section
-    customLines.forEach(l=>{ if (l.section===sec.key) rows.push(l.id); });
-  });
-  return rows;
-}
-
-function lineById(id){
-  return lineItems.find(l=>l.id===id) || haydenLines.find(l=>l.id===id) || reqLines.find(l=>l.id===id) || customLines.find(l=>l.id===id);
-}
-
-function cellKey(lineId, monthIdx){ return `forecast|${lineId}|${monthIdx}`; }
-function cellCommentCount(lineId, monthIdx){ return (commentsState[cellKey(lineId,monthIdx)]||[]).length; }
-
-function renderForecastTable(){
-  const tbl = document.getElementById('forecastTable');
-  let head = `<thead><tr><th class="lbl-h">Line Item</th>`;
-  months.forEach((m,i)=>{
-    const isA = i<ACTUAL_MONTHS;
-    head += `<th class="${isA?'actual-h':'fcst-h'}">${m}${isA?'':' ⋯'}</th>`;
-  });
-  head += `<th class="fcst-h">FY Total</th></tr></thead>`;
-
-  let bodyRows = '';
-  getForecastRows().forEach(row=>{
-    if (typeof row === 'object'){
-      const addBtn = row.key ? `<button class="sec-add" title="Add a line to ${escapeHtml(row.section)}" onclick="openAddLine('${row.key}')">+ Add line</button>` : '';
-      bodyRows += `<tr class="row-section"><td colspan="14"><div class="sec-wrap"><span class="sec-label">${row.section}</span>${addBtn}</div></td></tr>`;
-      return;
-    }
-    const id = row;
-    const l = lineById(id);
-    if (!l) return;
-    const vals = forecastState[id] || [];
-    const isHayden = l.hayden || l.req;
-    const isCustom = !!l.custom;
-    const delBtn = isCustom ? `<button class="line-del" title="Remove this line" onclick="deleteCustomLine('${id}')">&times;</button>` : '';
-    let rowHtml = `<tr class="${isHayden?'row-hayden':''}${isCustom?' row-custom':''}"><td class="lbl">${l.label}${delBtn}</td>`;
-    let total = 0;
-    months.forEach((m,i)=>{
-      const v = vals[i] || 0; total += v;
-      const isA = i<ACTUAL_MONTHS;
-      const cc = cellCommentCount(id,i);
-      const dot = cc>0 ? `<span class="cmt-dot" title="${cc} comment(s)" onclick="openComment('${id}',${i},event)"></span>` : '';
-      const trig = `<svg class="cmt-trigger" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" onclick="openComment('${id}',${i},event)"><path d="M2 3h12v8H6l-3 3V3z"/></svg>`;
-      if (isA){
-        rowHtml += `<td class="actual-cell">${v===0?'<span style="color:#CBD5E1">–</span>':fmt(v)}${dot}${trig}</td>`;
-      } else {
-        rowHtml += `<td class="fcst-cell"><input class="fcst-input" type="text" data-line="${id}" data-month="${i}" data-raw="${v}" value="${fmt(v)}">${dot}${trig}</td>`;
-      }
-    });
-    rowHtml += `<td class="actual-cell strong" style="font-weight:500;color:var(--text)">${fmt(total)}</td></tr>`;
-    bodyRows += rowHtml;
-  });
-
-  // totals footer
-  let footCols = '';
-  let grand = 0;
-  months.forEach((m,i)=>{
-    const colTotal = getForecastRows().filter(r=>typeof r==='string').reduce((s,id)=> s + ((forecastState[id]||[])[i]||0), 0);
-    grand += colTotal;
-    footCols += `<td>${fmt(colTotal)}</td>`;
-  });
-  const foot = `<tfoot><tr><td class="lbl">Total Department</td>${footCols}<td>${fmt(grand)}</td></tr></tfoot>`;
-
-  tbl.innerHTML = head + '<tbody>' + bodyRows + '</tbody>' + foot;
-
-  // wire inputs
-  tbl.querySelectorAll('.fcst-input').forEach(inp=>{
-    inp.addEventListener('focus', e=>{
-      // show the plain number for editing (strip $ and commas)
-      const raw = e.target.dataset.raw;
-      const v = parseInt(String(raw).replace(/[^0-9\-]/g,''));
-      e.target.value = isNaN(v) ? '' : v;
-      e.target.select();
-    });
-    inp.addEventListener('blur', async e=>{
-      const id = e.target.dataset.line, mi = parseInt(e.target.dataset.month);
-      const v = parseInt(String(e.target.value).replace(/[^0-9\-]/g,'')) || 0;
-      forecastState[id][mi] = v;
-      await saveForecastCloud();
-      renderForecastTable();
-      renderForecastKPIs();
-      renderForecastChart();
-    });
-    inp.addEventListener('keydown', e=>{ if(e.key==='Enter') e.target.blur(); });
-  });
-}
-
-function forecastLineYTD(id){ return (forecastState[id]||[]).slice(0,ACTUAL_MONTHS).reduce((a,b)=>a+b,0); }
-function forecastLineFwd(id){ return (forecastState[id]||[]).slice(ACTUAL_MONTHS).reduce((a,b)=>a+b,0); }
-
-// Interim 2026 plan = annualized run-rate of the existing actual lines only,
-// excluding unbudgeted adds (new hires, open reqs, custom lines). Swap this for
-// the approved plan per department once budget data is loaded to the DB.
-function getPlanTotal(){
-  return lineItems.reduce((s,l)=>{
-    const ytdActual = l.actuals.reduce((a,b)=>a+b,0);
-    const fwd = avg(l.actuals) * (12 - ACTUAL_MONTHS);
-    return s + ytdActual + fwd;
-  }, 0);
-}
-
-function renderForecastKPIs(){
-  const allIds = getForecastRows().filter(r=>typeof r==='string');
-  const total = allIds.reduce((s,id)=> s + (forecastState[id]||[]).reduce((a,b)=>a+b,0), 0);
-  const ytdActual = allIds.reduce((s,id)=> s + forecastLineYTD(id), 0);
-  const fwd = allIds.reduce((s,id)=> s + forecastLineFwd(id), 0);
-  document.getElementById('fcTotal').textContent = fmt(total);
-  document.getElementById('fcYtd').textContent = fmt(ytdActual);
-  document.getElementById('fcRemaining').textContent = fmt(fwd);
-
-  // 2026 Plan box: plan total plus forecast-vs-plan variance.
-  // This is spend, so a forecast above plan is unfavorable (red).
-  const plan = getPlanTotal();
-  const variance = total - plan;                 // positive = over plan
-  const pct = plan ? (variance / Math.abs(plan)) * 100 : 0;
-  const planEl = document.getElementById('fcPlan');
-  if (planEl) planEl.textContent = fmt(plan);
-  const varEl = document.getElementById('fcPlanVar');
-  if (varEl){
-    if (Math.abs(variance) < 1){
-      varEl.textContent = 'On plan';
-      varEl.className = 'kpi-delta up';
-    } else if (variance > 0){
-      varEl.textContent = `▲ ${fmt(variance)} over plan (${pct.toFixed(1)}%)`;
-      varEl.className = 'kpi-delta dn';
-    } else {
-      varEl.textContent = `▼ ${fmt(Math.abs(variance))} under plan (${Math.abs(pct).toFixed(1)}%)`;
-      varEl.className = 'kpi-delta up';
-    }
-  }
-  const subEl = document.getElementById('fcPlanSub');
-  if (subEl) subEl.textContent = 'Interim baseline · run-rate';
-
-  // Back-to-plan banner: what it takes to close an over-plan gap.
-  const banner = document.getElementById('fcBackToPlan');
-  if (banner){
-    if (variance > 1 && fwd > 0){
-      const cutPct = (variance / fwd) * 100;
-      banner.setAttribute('style',
-        'display:flex;align-items:center;gap:8px;padding:10px 14px;'+
-        'background:var(--red-bg);border:1px solid #FECACA;border-radius:8px;'+
-        'font-size:12px;color:var(--red);');
-      banner.innerHTML = `<strong>Back to plan:</strong> reduce Jun-Dec by ${fmt(variance)}, about ${cutPct.toFixed(0)}% of the ${fmt(fwd)} remaining forecast.`;
-    } else {
-      banner.setAttribute('style','display:none;');
-    }
-  }
-}
-
-function renderForecastChart(){
-  if (forecastChart) forecastChart.destroy();
-  const allIds = getForecastRows().filter(r=>typeof r==='string');
-  const monthTotals = months.map((m,i)=> allIds.reduce((s,id)=> s + ((forecastState[id]||[])[i]||0), 0));
-  const actualData = monthTotals.map((v,i)=> i<ACTUAL_MONTHS ? v : null);
-  const forecastData = monthTotals.map((v,i)=> i>=ACTUAL_MONTHS-1 ? v : null);
-  forecastChart = new Chart(document.getElementById('forecastChart'), {
-    type:'line',
-    data:{ labels:months.map(m=>m+" '26"), datasets:[
-      { label:'Actual', data:actualData, borderColor:'#1A56A0', backgroundColor:'rgba(26,86,160,0.08)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#1A56A0', pointBorderColor:'#fff', pointBorderWidth:2, borderWidth:2.5 },
-      { label:'Forecast', data:forecastData, borderColor:'#2E6FCC', backgroundColor:'rgba(46,111,204,0.05)', fill:true, tension:0.2, pointRadius:4, pointBackgroundColor:'#2E6FCC', pointBorderColor:'#fff', pointBorderWidth:2, borderWidth:2.5, borderDash:[5,4] }
-    ]},
-    options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, padding:14, font:{size:11} } },
-        tooltip:{ callbacks:{ label:(c)=> c.parsed.y===null?'':`${c.dataset.label}: ${fmt(c.parsed.y)}` } } },
-      scales:{ y:{ ticks:{ callback:(v)=>fmtK(v) }, grid:{color:'#F1F5F9'}, beginAtZero:false }, x:{ grid:{display:false} } } }
-  });
-}
-
-function renderForecast(){
-  renderForecastTable();
-  renderForecastKPIs();
-  renderForecastChart();
-}
-
-// =============================================================
-// COMMENTS POPOVER
-// =============================================================
-let activeCellKey = null;
-
-function openComment(lineId, monthIdx, ev){
-  if (ev) ev.stopPropagation();
-  const l = lineById(lineId);
-  activeCellKey = cellKey(lineId, monthIdx);
-  document.getElementById('cmtPopTitle').textContent = l ? l.label : 'Comment';
-  document.getElementById('cmtPopSub').textContent = `${months[monthIdx]} 2026 · ${monthIdx<ACTUAL_MONTHS?'Actual':'Forecast'}`;
-  renderCommentList();
-  document.getElementById('cmtInput').value = '';
-
-  const overlay = document.getElementById('cmtOverlay');
-  overlay.classList.add('show');
-  // position popover near the clicked cell
-  const pop = document.getElementById('cmtPop');
-  const rect = (ev && ev.target.closest('td')) ? ev.target.closest('td').getBoundingClientRect() : {left:window.innerWidth/2-150, bottom:200};
-  let left = rect.left;
-  let top = rect.bottom + 6;
-  if (left + 300 > window.innerWidth - 12) left = window.innerWidth - 312;
-  if (left < 12) left = 12;
-  if (top + 320 > window.innerHeight) top = Math.max(12, rect.top - 326);
-  pop.style.left = left + 'px';
-  pop.style.top = top + 'px';
-  setTimeout(()=>document.getElementById('cmtInput').focus(), 50);
-}
-
-function renderCommentList(){
-  const list = commentsState[activeCellKey] || [];
-  const el = document.getElementById('cmtList');
-  if (list.length === 0){
-    el.innerHTML = '<div class="cmt-empty">No comments yet. Add context or a proposed adjustment below.</div>';
+  if (consolidatedMode){
+    document.getElementById('venTable').innerHTML =
+      `<thead><tr><th>Vendor</th></tr></thead><tbody><tr><td class="dim" style="padding:18px">Vendor-level detail shows when you drill into a single department. In Consolidated view, see the P&L tab for category rollups.</td></tr></tbody>`;
+    destroyChart('venBar');
     return;
   }
-  el.innerHTML = list.map((c,i)=>`
-    <div class="cmt-item">
-      <div class="cmt-item-top">
-        <span class="cmt-author">${c.author}</span>
-        <span class="cmt-time">${new Date(c.ts).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>
-      </div>
-      <div class="cmt-text">${escapeHtml(c.text)}</div>
-      <button class="cmt-del" onclick="removeComment(${i})">Delete</button>
-    </div>`).join('');
+  let h = `<thead><tr><th>Vendor</th><th>Category</th><th class="r">May</th><th class="r">YTD</th><th class="r">Run-rate</th></tr></thead><tbody>`;
+  vlines.forEach(l=>{ const y=ytd(l.actuals);
+    h += `<tr><td class="strong">${l.vendor}</td><td class="dim">${catMeta[l.cat]?catMeta[l.cat].label:l.cat}</td><td class="r">${fmt(l.actuals[CURRENT_MONTH_IDX])}</td><td class="r strong">${fmt(y)}</td><td class="r dim">${fmt(y/ACTUAL_MONTHS*12)}</td></tr>`; });
+  h += `</tbody><tfoot><tr><td>Total</td><td></td><td class="r">${fmt(mtd)}</td><td class="r">${fmt(vYtd)}</td><td class="r">${fmt(vYtd/ACTUAL_MONTHS*12)}</td></tr></tfoot>`;
+  document.getElementById('venTable').innerHTML = h;
+
+  // top vendors bar
+  const top = vlines.slice(0,8);
+  destroyChart('venBar');
+  charts.venBar = new Chart(document.getElementById('venBar'), { type:'bar',
+    data:{ labels:top.map(l=>l.vendor.length>22?l.vendor.slice(0,20)+'…':l.vendor), datasets:[{ data:top.map(l=>ytd(l.actuals)), backgroundColor:'#1A56A0', borderRadius:4, barThickness:18 }] },
+    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>fmt(c.parsed.x) } } }, scales:{ x:{ ticks:{ callback:v=>fmtK(v) }, grid:{color:'#F1F5F9'} }, y:{ grid:{display:false} } } } });
 }
 
-function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-
-async function submitComment(){
-  const txt = document.getElementById('cmtInput').value.trim();
-  if (!txt || !activeCellKey) return;
-  const btn = document.getElementById('cmtSaveBtn');
-  btn.disabled = true;
-  await addCommentCloud(activeCellKey, txt);
-  btn.disabled = false;
-  document.getElementById('cmtInput').value = '';
-  renderCommentList();
-  renderForecastTable();   // refresh comment dots
-  toast('Comment added');
-}
-
-async function removeComment(idx){
-  await deleteCommentCloud(activeCellKey, idx);
-  renderCommentList();
-  renderForecastTable();
-}
-
-function closeComment(ev){
-  if (ev && ev.target.id !== 'cmtOverlay') return;
-  document.getElementById('cmtOverlay').classList.remove('show');
-  activeCellKey = null;
-}
-document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeComment({target:{id:'cmtOverlay'}}); });
-
-// =============================================================
-// ORG CHART  — Ben Fremont, VP FP&A
-// =============================================================
-function renderOrg(){
-  const tree = document.getElementById('orgTree');
-  tree.innerHTML = `
-    <div class="org-node exec">
-      <div class="org-node-role">VP · Financial Planning &amp; Analysis</div>
-      <div class="org-node-name">Ben Fremont</div>
-      <div class="org-node-meta">Team Lead · 7 direct reports</div>
-    </div>
-    <div class="org-connector"></div>
-    <div class="org-section-label">Direct Reports</div>
-    <div class="org-hbar-wrap"></div>
-    <div style="height:14px"></div>
-
-    <div class="org-row">
-
-      <!-- 1. Joshua Ritch -->
-      <div class="org-branch">
-        <div class="org-node lead">
-          <div class="org-node-role">Finance Manager</div>
-          <div class="org-node-name">Joshua Ritch</div>
-        </div>
-      </div>
-
-      <!-- 2. Timothy Moynihan + 2 analysts -->
-      <div class="org-branch">
-        <div class="org-node lead">
-          <div class="org-node-role">Finance Manager</div>
-          <div class="org-node-name">Timothy Moynihan</div>
-          <div class="org-node-meta">2 reports</div>
-        </div>
-        <div class="org-connector"></div>
-        <div class="org-sub">
-          <div class="org-node sub">
-            <div class="org-node-role">Financial Analyst</div>
-            <div class="org-node-name">Emiliano Godinez Berlin</div>
-          </div>
-          <div class="org-node sub">
-            <div class="org-node-role">Financial Analyst</div>
-            <div class="org-node-name">Justice Perez</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 3. Christine Pacheco -->
-      <div class="org-branch">
-        <div class="org-node">
-          <div class="org-node-role">Sr. Financial Analyst</div>
-          <div class="org-node-name">Christine Pacheco</div>
-        </div>
-      </div>
-
-      <!-- 4. Jordan Camenson + 1 analyst -->
-      <div class="org-branch">
-        <div class="org-node lead">
-          <div class="org-node-role">Finance Manager</div>
-          <div class="org-node-name">Jordan Camenson</div>
-          <div class="org-node-meta">1 report</div>
-        </div>
-        <div class="org-connector"></div>
-        <div class="org-sub">
-          <div class="org-node sub">
-            <div class="org-node-role">Financial Analyst</div>
-            <div class="org-node-name">Pindaro Medina</div>
-          </div>
-        </div>
-      </div>
-
-    </div>
-
-    <div style="height:16px"></div>
-    <div class="org-row">
-      <!-- 5. Billy Flynn -->
-      <div class="org-branch">
-        <div class="org-node">
-          <div class="org-node-role">Financial Analyst</div>
-          <div class="org-node-name">Billy Flynn</div>
-        </div>
-      </div>
-
-      <!-- 6. CCSI Team -->
-      <div class="org-branch">
-        <div class="org-node lead">
-          <div class="org-node-role">CCSI Team</div>
-          <div class="org-node-name">Call Center Services Intl</div>
-          <div class="org-node-meta">2 analysts</div>
-        </div>
-        <div class="org-connector"></div>
-        <div class="org-sub">
-          <div class="org-node sub">
-            <div class="org-node-role">Financial Analyst</div>
-            <div class="org-node-name">Jorge Cadena</div>
-          </div>
-          <div class="org-node sub">
-            <div class="org-node-role">Financial Analyst</div>
-            <div class="org-node-name">Pedro Fernandez</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 7. Hayden Estes - incoming -->
-      <div class="org-branch">
-        <div class="org-node incoming">
-          <div class="org-node-date">Starts May 31, 2026</div>
-          <div class="org-node-role">Director · Finance Transformation</div>
-          <div class="org-node-name">Hayden Estes</div>
-          <div class="org-node-meta">Incoming hire</div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  // Open requisitions section
-  if (reqs.length){
-    const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString([], {month:'short',day:'numeric',year:'numeric'}) : 'TBD';
-    let reqHtml = `
-      <div style="height:18px"></div>
-      <div class="org-section-label">Open Requisitions</div>
-      <div class="org-hbar-wrap"></div>
-      <div style="height:14px"></div>
-      <div class="org-row">`;
-    reqs.forEach(r=>{
-      const mid = reqMidpointAnnual(r);
-      reqHtml += `
-        <div class="org-branch">
-          <div class="org-node req">
-            <span class="org-node-badge">OPEN REQ</span>
-            <button class="org-req-del" title="Remove requisition" onclick="deleteReq(${r.id})">&times;</button>
-            <div class="org-node-role">${escapeHtml(r.title||'Open Role')}</div>
-            <div class="org-node-name">${fmt(mid)} mid${r.bonus_pct?` · ${r.bonus_pct}% bonus`:''}</div>
-            <div class="org-node-meta">${r.reports_to?escapeHtml(r.reports_to)+' · ':''}Start ${fmtDate(r.start_date)}</div>
-          </div>
-        </div>`;
-    });
-    reqHtml += `</div>`;
-    tree.insertAdjacentHTML('beforeend', reqHtml);
-  }
-
-  // badge + KPI
-  const badge = document.getElementById('reqBadge');
-  if (badge){
-    badge.textContent = reqs.length ? `${reqs.length} open requisition${reqs.length>1?'s':''}` : 'No open requisitions';
-    badge.className = 'badge ' + (reqs.length ? 'bwarn' : 'bmuted');
-  }
-  const kpiOpen = document.getElementById('orgOpenReqs');
-  if (kpiOpen) kpiOpen.textContent = reqs.length;
-  const kpiCount = document.getElementById('orgCount');
-  if (kpiCount) kpiCount.textContent = 12 + reqs.length;
-}
-
-// =============================================================
-// REQUISITION MODAL
-// =============================================================
-function parseNum(s){ return parseInt(String(s||'').replace(/[^0-9\-]/g,'')) || 0; }
-
-function openReqModal(){
-  ['reqTitle','reqReports','reqLow','reqHigh','reqBonus','reqStart'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('reqError').textContent = '';
-  document.getElementById('reqPreview').classList.remove('show');
-  document.getElementById('reqOverlay').classList.add('show');
-  setTimeout(()=>document.getElementById('reqTitle').focus(), 50);
-}
-
-function closeReq(ev){
-  if (ev && ev.target.id !== 'reqOverlay') return;
-  document.getElementById('reqOverlay').classList.remove('show');
-}
-
-function updateReqPreview(){
-  const low = parseNum(document.getElementById('reqLow').value);
-  const high = parseNum(document.getElementById('reqHigh').value);
-  const bonus = parseNum(document.getElementById('reqBonus').value);
-  const prev = document.getElementById('reqPreview');
-  if (low>0 && high>0){
-    const mid = Math.round((low+high)/2);
-    const bonusAmt = Math.round(mid*bonus/100);
-    const ben = Math.round((mid+bonusAmt)*benefitsRatio);
-    const allIn = mid + bonusAmt + ben;
-    prev.innerHTML = `Forecast impact: midpoint ${fmt(mid)}${bonus?` + ${bonus}% bonus ${fmt(bonusAmt)}`:''} + benefits ${fmt(ben)} = <strong>${fmt(allIn)}/yr</strong> all-in, spread monthly from the start date.`;
-    prev.classList.add('show');
-  } else {
-    prev.classList.remove('show');
-  }
-}
-['reqLow','reqHigh','reqBonus'].forEach(id=>{
-  const el = document.getElementById(id);
-  if (el) el.addEventListener('input', updateReqPreview);
-});
-
-async function submitReq(){
-  const title = document.getElementById('reqTitle').value.trim();
-  const reports = document.getElementById('reqReports').value.trim();
-  const low = parseNum(document.getElementById('reqLow').value);
-  const high = parseNum(document.getElementById('reqHigh').value);
-  const bonus = parseNum(document.getElementById('reqBonus').value);
-  const start = document.getElementById('reqStart').value || null;
-  const err = document.getElementById('reqError');
-  err.textContent = '';
-
-  if (!title){ err.textContent = 'Enter a title.'; return; }
-  if (low<=0 || high<=0){ err.textContent = 'Enter both salary range values.'; return; }
-  if (high < low){ err.textContent = 'High end must be greater than the low end.'; return; }
-
-  const btn = document.getElementById('reqSaveBtn');
-  btn.disabled = true; btn.textContent = 'Adding…';
-  try {
-    const { data, error } = await sb.from('requisitions')
-      .insert({ title, reports_to:reports||null, salary_low:low, salary_high:high, bonus_pct:bonus, start_date:start, department:homeDept })
-      .select().single();
-    if (error) throw error;
-    reqs.push(data);
-    buildReqLines();
-    // add default forecast values for the new req's lines (merge, keep existing edits)
-    const defaults = buildDefaultForecast();
-    reqLines.filter(l=>l.reqId===data.id).forEach(l=>{ forecastState[l.id] = defaults[l.id]; });
-    await saveForecastCloud();
-    closeReq();
-    renderOrg();
-    renderForecast();
-    toast('Requisition added · folded into forecast');
-  } catch(e){
-    console.warn('req save failed', e);
-    err.textContent = 'Could not save. Check your connection and try again.';
-  } finally {
-    btn.disabled = false; btn.textContent = 'Add requisition';
-  }
-}
-
-async function deleteReq(id){
-  if (!confirm('Remove this requisition? It will be taken out of the forecast too.')) return;
-  try {
-    const { error } = await sb.from('requisitions').delete().eq('id', id);
-    if (error) throw error;
-  } catch(e){ console.warn('req delete failed', e); toast('Delete failed — check connection', true); return; }
-  // remove its forecast lines from state
-  reqLines.filter(l=>l.reqId===id).forEach(l=>{ delete forecastState[l.id]; });
-  reqs = reqs.filter(r=>r.id!==id);
-  buildReqLines();
-  await saveForecastCloud();
-  renderOrg();
-  renderForecast();
-  toast('Requisition removed');
-}
-
-// =============================================================
-// CUSTOM FORECAST LINES (per-section "+")
-// =============================================================
-function sectionLabel(key){ const s = SECTIONS.find(x=>x.key===key); return s ? s.label : key; }
-
-async function openAddLine(sectionKey){
-  const name = prompt(`Add a line to "${sectionLabel(sectionKey)}"\n\nEnter a name (employee, vendor, or cost):`);
-  if (name === null) return;            // cancelled
-  const label = name.trim();
-  if (!label){ toast('Enter a name for the line', true); return; }
-
-  const id = `custom_${sectionKey}_${Date.now()}`;
-  try {
-    const { error } = await sb.from('custom_lines').insert({ id, label, cat:sectionKey, department:homeDept });
-    if (error) throw error;
-  } catch(e){ console.warn('custom line save failed', e); toast('Could not add line — check connection', true); return; }
-
-  const line = { id, label, section:sectionKey, cat:SECTION_DEFAULT_CAT[sectionKey]||'other', custom:true };
-  customLines.push(line);
-  forecastState[id] = months.map(()=> 0);   // blank, editable
-  await saveForecastCloud();
-  renderForecast();
-  toast(`Added "${label}" — type the monthly amounts`);
-}
-
-async function deleteCustomLine(id){
-  const l = customLines.find(x=>x.id===id);
-  if (!l) return;
-  if (!confirm(`Remove "${l.label}" from the forecast?`)) return;
-  try {
-    const { error } = await sb.from('custom_lines').delete().eq('id', id);
-    if (error) throw error;
-  } catch(e){ console.warn('custom line delete failed', e); toast('Delete failed — check connection', true); return; }
-  customLines = customLines.filter(x=>x.id!==id);
-  delete forecastState[id];
-  await saveForecastCloud();
-  renderForecast();
-  toast('Line removed');
-}
-
-// =============================================================
-// EXPORT SNAPSHOT (JSON download of forecast + comments)
-// =============================================================
-function exportSnapshot(){
-  const snap = {
-    generated: new Date().toISOString(),
-    reviewer: REVIEWER,
-    forecast: forecastState,
-    comments: commentsState,
-    requisitions: reqs,
-    customLines: customLines,
-  };
-  const blob = new Blob([JSON.stringify(snap, null, 2)], {type:'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `KBS_FPA_forecast_review_${new Date().toISOString().slice(0,10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-  toast('Snapshot exported');
-}
-
-// =============================================================
-// BUTTON WIRING
-// =============================================================
-document.querySelectorAll('#viewToggle button').forEach(b=>{
-  b.addEventListener('click', ()=>{
-    document.querySelectorAll('#viewToggle button').forEach(x=>x.classList.remove('active'));
-    b.classList.add('active');
-    currentView = b.dataset.view;
-    renderSpend();
-  });
-});
-
-document.getElementById('resetForecast').addEventListener('click', async ()=>{
-  if(!confirm('Reset all forecast months to the YTD baseline? This clears your forecast edits (comments are kept).')) return;
-  forecastState = buildDefaultForecast();
-  await saveForecastCloud();
-  renderForecast();
-  toast('Forecast reset to baseline');
-});
-
-document.getElementById('saveForecast').addEventListener('click', async ()=>{
-  await saveForecastCloud();
-  toast('Saved to cloud · notification sent');
-});
-
-document.getElementById('exportBtn').addEventListener('click', exportSnapshot);
-document.getElementById('addReqBtn').addEventListener('click', openReqModal);
-
-// =============================================================
-// WORKFORCE TIMELINE  (hires/exits across 2026 + headcount census)
-// Scope follows the top department selector + the user's access.
-// Sample data for now; swap WF_EVENTS for a personnel_events query.
-// =============================================================
-const WF_START_HC = { '1020':24, '3906':11, '3040':9, '3070':4, '3020':12 };
-const WF_EVENTS = [
-  // 1020 Field Ops Mgmt-LSS — high churn
-  { dept:'1020', name:'Greg Sanders',   role:'Area Operations Manager',  type:'term', labor:'indirect', date:'2026-01-30' },
-  { dept:'1020', name:'Marcus Webb',    role:'Area Operations Manager',  type:'hire', labor:'indirect', date:'2026-02-09' },
-  { dept:'1020', name:'Tasha Greene',   role:'Site Supervisor',          type:'hire', labor:'direct',   date:'2026-03-02' },
-  { dept:'1020', name:'Holly Tran',     role:'Operations Coordinator',   type:'term', labor:'indirect', date:'2026-03-13' },
-  { dept:'1020', name:'Luis Romero',    role:'Account Manager',          type:'hire', labor:'indirect', date:'2026-03-23' },
-  { dept:'1020', name:'Sam Okafor',     role:'Site Supervisor',          type:'term', labor:'direct',   date:'2026-04-24' },
-  { dept:'1020', name:'Priya Nair',     role:'Operations Analyst',       type:'hire', labor:'indirect', date:'2026-05-04' },
-  { dept:'1020', name:'Devon Clarke',   role:'Site Supervisor',          type:'hire', labor:'direct',   date:'2026-06-15' },
-  { dept:'1020', name:'Bianca Lopez',   role:'Account Manager',          type:'term', labor:'indirect', date:'2026-07-08' },
-  { dept:'1020', name:'Renee Adler',    role:'Regional Manager',         type:'hire', labor:'indirect', date:'2026-08-03' },
-  { dept:'1020', name:'Nate Briggs',    role:'Regional Manager',         type:'term', labor:'indirect', date:'2026-08-28' },
-  { dept:'1020', name:'Omar Farah',     role:'Operations Coordinator',   type:'hire', labor:'indirect', date:'2026-09-14' },
-  { dept:'1020', name:'Kelly Pace',     role:'Site Supervisor',          type:'hire', labor:'direct',   date:'2026-10-19' },
-  { dept:'1020', name:'Cara Whitfield', role:'Operations Analyst',       type:'term', labor:'indirect', date:'2026-11-06' },
-  // 3906 Sales & SAM
-  { dept:'3906', name:'Rick Padilla',   role:'Strategic Account Manager',type:'term', labor:'indirect', date:'2026-02-17' },
-  { dept:'3906', name:'Jordan Mathis',  role:'Strategic Account Manager',type:'hire', labor:'indirect', date:'2026-04-06' },
-  { dept:'3906', name:'Alyssa Bend',    role:'Sales Director',           type:'hire', labor:'indirect', date:'2026-07-20' },
-  { dept:'3906', name:'Tom Vesey',      role:'Sales Representative',     type:'term', labor:'indirect', date:'2026-09-02' },
-  // 3040 IT
-  { dept:'3040', name:'Anita Roy',      role:'Systems Engineer',         type:'hire', labor:'indirect', date:'2026-03-30' },
-  { dept:'3040', name:'Dana Felix',     role:'Help Desk Lead',           type:'term', labor:'indirect', date:'2026-06-01' },
-  { dept:'3040', name:'Kevin Liu',      role:'Security Analyst',         type:'hire', labor:'indirect', date:'2026-08-11' },
-  // 3070 Legal
-  { dept:'3070', name:'Grace Okwu',     role:'Contracts Counsel',        type:'hire', labor:'indirect', date:'2026-05-18' },
-  // 3020 FP&A
-  { dept:'3020', name:'Pat Nolan',      role:'Financial Analyst',        type:'term', labor:'indirect', date:'2026-03-16' },
-  { dept:'3020', name:'Hayden Estes',   role:'Director, Finance Transformation', type:'hire', labor:'indirect', date:'2026-05-31' },
-];
-
-let wfTypeFilter = 'all';     // all | hire | term
-let wfLaborFilter = 'all';    // all | indirect | direct
-let wfWired = false;
-
-const WF_YEAR_START = new Date('2026-01-01T00:00:00');
-const WF_YEAR_END   = new Date('2026-12-31T00:00:00');
-const WF_SPAN = WF_YEAR_END - WF_YEAR_START;
-const WF_PAD_L = 30, WF_PAD_R = 30, WF_LANE_H = 17, WF_DOT_R = 6, WF_GAP = 18, WF_CENTER_GAP = 18;
-
-function wfFrac(dateStr){ return (new Date(dateStr+'T00:00:00') - WF_YEAR_START) / WF_SPAN; }
-function wfFmtDate(dateStr){ return new Date(dateStr+'T00:00:00').toLocaleDateString([], {month:'short', day:'numeric', year:'numeric'}); }
-
-// in-scope departments = the top selector (or all visible depts when consolidated)
-function wfScopeDepts(){
-  if (activeDept && activeDept !== '__ALL__') return [activeDept];
-  return (visibleDepts && visibleDepts.length) ? visibleDepts.slice() : ['3020'];
-}
-function wfInScope(e){ return wfScopeDepts().includes(e.dept); }
-function wfStartHC(){ return wfScopeDepts().reduce((s,d)=> s + (WF_START_HC[d]||0), 0); }
-function wfConsolidated(){ return wfScopeDepts().length > 1; }
-
-function wfDotEvents(){
-  return WF_EVENTS.map((e,i)=>({ ...e, _i:i }))
-    .filter(e => wfInScope(e)
-      && (wfTypeFilter==='all' || e.type===wfTypeFilter)
-      && (wfLaborFilter==='all' || e.labor===wfLaborFilter));
-}
-function wfStatEvents(){
-  return WF_EVENTS.filter(e => wfInScope(e) && (wfLaborFilter==='all' || e.labor===wfLaborFilter));
-}
-function wfCensusEvents(){
-  return WF_EVENTS.filter(wfInScope).slice().sort((a,b)=> new Date(a.date) - new Date(b.date));
-}
-
-function wfRenderKPIs(){
-  const wrap = document.getElementById('wfKpis');
-  if (!wrap) return;
-  const evs = wfStatEvents();
-  const hires = evs.filter(e=>e.type==='hire').length;
-  const terms = evs.filter(e=>e.type==='term').length;
-  const net = hires - terms;
-  const deptEvs = WF_EVENTS.filter(wfInScope);
-  const indNet = deptEvs.filter(e=>e.labor==='indirect'&&e.type==='hire').length
-               - deptEvs.filter(e=>e.labor==='indirect'&&e.type==='term').length;
-  const cur = wfStartHC() + deptEvs.filter(e=>e.type==='hire').length - deptEvs.filter(e=>e.type==='term').length;
-  const netCls = net>0?'up':net<0?'dn':'';
-  const indCls = indNet>0?'up':indNet<0?'dn':'';
-  const laborSub = wfLaborFilter==='all' ? 'All labor' : wfLaborFilter+' only';
-  const cards = [
-    { label:'Current Headcount', val:cur, sub:`Jan 1: ${wfStartHC()}` },
-    { label:'Hires YTD', val:hires, sub:laborSub },
-    { label:'Exits YTD', val:terms, sub:laborSub },
-    { label:'Net Change', val:(net>0?'+':'')+net, cls:netCls,
-      sub:`<span class="${indCls}">${indNet>0?'+':''}${indNet}</span> from indirect labor` },
+// ---- TAB 4: T&E ----------------------------------------------------------
+function renderTe(){
+  const teLines = lineItems.filter(l=>l.cat==='te');
+  const teYtd = teLines.reduce((s,l)=>s+ytd(l.actuals),0);
+  const teMay = teLines.reduce((s,l)=>s+l.actuals[CURRENT_MONTH_IDX],0);
+  const kpis = [
+    { l:'T&E · May', v:fmt(teMay), s:'Current month' },
+    { l:'T&E · YTD', v:fmt(teYtd), s:'Jan–May' },
+    { l:'Annualized', v:fmt(teYtd/ACTUAL_MONTHS*12), s:'YTD pace x12' },
+    { l:'Lines', v:teLines.length, s:'GL accounts with activity' },
   ];
-  wrap.innerHTML = cards.map(c=>`
-    <div class="kpi">
-      <div class="kpi-label">${c.label}</div>
-      <div class="kpi-val ${c.cls||''}">${c.val}</div>
-      <div class="kpi-sub">${c.sub}</div>
-    </div>`).join('');
-}
+  document.getElementById('teKpis').innerHTML = kpis.map(k=>
+    `<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
 
-function wfAssignLanes(items){
-  const lastX = [];
-  items.forEach(it=>{
-    let placed = false;
-    for (let i=0;i<lastX.length;i++){
-      if (it.x - lastX[i] >= WF_GAP){ it.lane=i; lastX[i]=it.x; placed=true; break; }
-    }
-    if (!placed){ it.lane=lastX.length; lastX.push(it.x); }
-  });
-  return lastX.length;
-}
-
-function wfRenderTimeline(){
-  const svg = document.getElementById('wfTlSvg');
-  if (!svg) return;
-  const W = svg.clientWidth || svg.parentElement.clientWidth || 820;
-  const plotW = W - WF_PAD_L - WF_PAD_R;
-  const evs = wfDotEvents().map(e=>({ ...e, x: WF_PAD_L + wfFrac(e.date)*plotW }));
-  const hires = evs.filter(e=>e.type==='hire').sort((a,b)=>a.x-b.x);
-  const terms = evs.filter(e=>e.type==='term').sort((a,b)=>a.x-b.x);
-  const hLanes = wfAssignLanes(hires);
-  const tLanes = wfAssignLanes(terms);
-  const topH = Math.max(1,hLanes)*WF_LANE_H + 26;
-  const botH = Math.max(1,tLanes)*WF_LANE_H + 26;
-  const centerY = topH;
-  const H = topH + botH + 18;
-  svg.setAttribute('height', H);
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-
-  let s = '';
-  for (let m=0;m<12;m++){
-    const fx = WF_PAD_L + wfFrac(`2026-${String(m+1).padStart(2,'0')}-01`)*plotW;
-    s += `<line x1="${fx}" y1="14" x2="${fx}" y2="${H-14}" stroke="#EEF2F7" stroke-width="1"/>`;
-    s += `<text x="${fx+4}" y="${H-4}" font-size="10" fill="#94A3B8" font-family="DM Mono,monospace">${months[m]}</text>`;
+  if (!teLines.length){
+    document.getElementById('teTable').innerHTML =
+      `<thead><tr><th>T&E</th></tr></thead><tbody><tr><td class="dim" style="padding:18px">No T&E activity for this department in the loaded period.</td></tr></tbody>`;
+    destroyChart('teBar'); return;
   }
-  s += `<line x1="${WF_PAD_L}" y1="${centerY}" x2="${W-WF_PAD_R}" y2="${centerY}" stroke="#CBD5E1" stroke-width="1.5"/>`;
+  let h = `<thead><tr><th>GL / Line</th>${months.slice(0,ACTUAL_MONTHS).map(m=>`<th class="r">${m}</th>`).join('')}<th class="r">YTD</th></tr></thead><tbody>`;
+  teLines.sort((a,b)=>ytd(b.actuals)-ytd(a.actuals)).forEach(l=>{
+    h += `<tr><td class="strong">${l.label.split('·').pop().trim()}</td>`+l.actuals.map(v=>`<td class="r">${v?fmt(v):'<span class="dim">–</span>'}</td>`).join('')+`<td class="r strong">${fmt(ytd(l.actuals))}</td></tr>`; });
+  h += `</tbody>`;
+  document.getElementById('teTable').innerHTML = h;
 
-  const plot = (list, dir) => {
-    list.forEach(e=>{
-      const y = centerY + dir*(WF_CENTER_GAP + e.lane*WF_LANE_H);
-      const color = e.type==='hire' ? 'var(--hire)' : 'var(--term)';
-      s += `<line x1="${e.x}" y1="${centerY}" x2="${e.x}" y2="${y}" stroke="${color}" stroke-width="1" opacity="0.35"/>`;
-      if (e.labor==='direct'){
-        s += `<circle class="wf-dot" data-i="${e._i}" cx="${e.x}" cy="${y}" r="${WF_DOT_R}" fill="#fff" stroke="${color}" stroke-width="2.5"/>`;
-      } else {
-        s += `<circle class="wf-dot" data-i="${e._i}" cx="${e.x}" cy="${y}" r="${WF_DOT_R}" fill="${color}"/>`;
-      }
-    });
-  };
-  plot(hires,-1);
-  plot(terms,+1);
-
-  svg.innerHTML = s;
-  wfWireDots();
-  const shown = evs.length;
-  const sub = document.getElementById('wfTlSub');
-  if (sub) sub.textContent = `${shown} event${shown===1?'':'s'} in view · hover any dot for the person`;
+  const monthly = months.slice(0,ACTUAL_MONTHS).map((m,i)=> teLines.reduce((s,l)=>s+l.actuals[i],0));
+  destroyChart('teBar');
+  charts.teBar = new Chart(document.getElementById('teBar'), { type:'line',
+    data:{ labels:months.slice(0,ACTUAL_MONTHS), datasets:[{ label:'Actual T&E', data:monthly, borderColor:'#1A56A0', backgroundColor:'rgba(26,86,160,0.08)', fill:true, tension:0.3, pointRadius:4, pointBackgroundColor:'#1A56A0', pointBorderColor:'#fff', pointBorderWidth:2, borderWidth:2 }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>fmt(c.parsed.y) } } }, scales:{ y:{ ticks:{ callback:v=>fmtK(v) }, grid:{color:'#F1F5F9'}, beginAtZero:true }, x:{ grid:{display:false} } } } });
 }
 
-function wfRenderCensus(){
-  const svg = document.getElementById('wfCensusSvg');
-  if (!svg) return;
-  const W = svg.clientWidth || svg.parentElement.clientWidth || 820;
-  const H = 86;
-  const plotW = W - WF_PAD_L - WF_PAD_R;
-  const top = 14, bot = H - 20;
+// ---- TAB 5: BUDGET -------------------------------------------------------
+// No AOP / reforecast versions loaded yet. Show the derived run-rate baseline
+// as the only "version", with an honest note about loading real budget data.
+function renderBudget(){
+  const ytdActual = lineItems.reduce((s,l)=>s+ytd(l.actuals),0);
+  const fullYearBaseline = lineItems.reduce((s,l)=>s+ ytd(l.actuals) + avg(l.actuals)*(12-ACTUAL_MONTHS), 0);
+  const kpis = [
+    { l:'YTD Actual', v:fmt(ytdActual), s:'Jan–May' },
+    { l:'Run-rate Full-Year', v:fmt(fullYearBaseline), s:'Actuals + YTD pace' },
+    { l:'AOP Plan', v:'Not loaded', s:'Awaiting budget feed', cls:'fl' },
+    { l:'Variance to AOP', v:'—', s:'Needs AOP', cls:'fl' },
+  ];
+  document.getElementById('budKpis').innerHTML = kpis.map(k=>
+    `<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val ${k.cls||''}">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
 
-  let hc = wfStartHC();
-  const pts = [{ f:0, hc }];
-  wfCensusEvents().forEach(e=>{ hc += (e.type==='hire'?1:-1); pts.push({ f:wfFrac(e.date), hc }); });
-  pts.push({ f:1, hc });
+  // chart: actuals (Jan-May) + run-rate forecast (Jun-Dec)
+  const monthly = months.map((m,i)=> i<ACTUAL_MONTHS ? lineItems.reduce((s,l)=>s+l.actuals[i],0) : lineItems.reduce((s,l)=>s+avg(l.actuals),0));
+  destroyChart('budBar');
+  charts.budBar = new Chart(document.getElementById('budBar'), { type:'bar',
+    data:{ labels:months, datasets:[
+      { label:'Actual', data:monthly.map((v,i)=>i<ACTUAL_MONTHS?v:null), backgroundColor:'#1A56A0', borderRadius:3 },
+      { label:'Run-rate forecast', data:monthly.map((v,i)=>i>=ACTUAL_MONTHS?v:null), backgroundColor:'#A8C0E8', borderRadius:3 },
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, padding:12, font:{size:11} } }, tooltip:{ callbacks:{ label:c=>`${c.dataset.label}: ${fmt(c.parsed.y||0)}` } } }, scales:{ y:{ ticks:{ callback:v=>fmtK(v) }, grid:{color:'#F1F5F9'} }, x:{ grid:{display:false} } } } });
 
-  const vals = pts.map(p=>p.hc);
-  let lo = Math.min(...vals), hi = Math.max(...vals);
-  if (hi===lo){ hi+=1; lo-=1; }
-  const padv = Math.max(1, Math.round((hi-lo)*0.2)); lo-=padv; hi+=padv;
-  const X = f => WF_PAD_L + f*plotW;
-  const Y = v => bot - ((v-lo)/(hi-lo))*(bot-top);
-
-  let line = `M ${X(pts[0].f)} ${Y(pts[0].hc)}`;
-  for (let i=1;i<pts.length;i++){
-    line += ` L ${X(pts[i].f)} ${Y(pts[i-1].hc)} L ${X(pts[i].f)} ${Y(pts[i].hc)}`;
-  }
-  const area = line + ` L ${X(1)} ${bot} L ${X(0)} ${bot} Z`;
-
-  let s = '';
-  for (let m=0;m<12;m++){
-    const fx = X(wfFrac(`2026-${String(m+1).padStart(2,'0')}-01`));
-    s += `<line x1="${fx}" y1="${top}" x2="${fx}" y2="${bot}" stroke="#EEF2F7" stroke-width="1"/>`;
-  }
-  s += `<path d="${area}" fill="rgba(26,86,160,0.07)"/>`;
-  s += `<path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
-  s += `<circle cx="${X(0)}" cy="${Y(pts[0].hc)}" r="3" fill="var(--accent)"/>`;
-  s += `<text x="${X(0)+6}" y="${Y(pts[0].hc)-6}" font-size="11" fill="var(--accent)" font-family="DM Mono,monospace">${pts[0].hc}</text>`;
-  const last = pts[pts.length-1];
-  s += `<circle cx="${X(1)}" cy="${Y(last.hc)}" r="3.5" fill="var(--accent)"/>`;
-  s += `<text x="${X(1)-8}" y="${Y(last.hc)-7}" font-size="11" fill="var(--accent)" font-family="DM Mono,monospace" text-anchor="end">${last.hc}</text>`;
-
-  svg.setAttribute('height', H);
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  svg.innerHTML = s;
+  document.getElementById('budNote').innerHTML =
+    `<b>Budget versions — not loaded.</b> The bars show this department's <em>actuals</em> through May plus a simple run-rate projection for the balance of year. `+
+    `The AOP and reforecast versions (4+8, 6+6, 8+4) populate once approved budget figures are loaded to the database. The run-rate here is the interim baseline.`;
 }
 
-function wfWireDots(){
-  const tip = document.getElementById('wfTip');
-  if (!tip) return;
-  const place = (ev) => {
-    let x = ev.clientX + 14, y = ev.clientY + 14;
-    const r = tip.getBoundingClientRect();
-    if (x + r.width > window.innerWidth - 10) x = ev.clientX - r.width - 14;
-    if (y + r.height > window.innerHeight - 10) y = ev.clientY - r.height - 14;
-    tip.style.left = x + 'px'; tip.style.top = y + 'px';
-  };
-  document.querySelectorAll('#wfTlSvg .wf-dot').forEach(d=>{
-    d.addEventListener('mouseenter', ev=>{
-      const e = WF_EVENTS[+d.dataset.i];
-      if (!e) return;
-      const typeTag = e.type==='hire'
-        ? '<span class="wf-tag wf-tag-hire">New hire</span>'
-        : '<span class="wf-tag wf-tag-term">Exit</span>';
-      const laborTag = e.labor==='indirect'
-        ? '<span class="wf-tag wf-tag-ind">Indirect</span>'
-        : '<span class="wf-tag wf-tag-dir">Direct</span>';
-      const deptLine = wfConsolidated()
-        ? `<div class="wf-tip-dept">${deptName(e.dept)} (${e.dept})</div>` : '';
-      tip.innerHTML = `
-        <div class="wf-tip-name">${escapeHtml(e.name)}</div>
-        <div class="wf-tip-role">${escapeHtml(e.role)}</div>
-        ${deptLine}
-        <div class="wf-tip-row">${typeTag}${laborTag}</div>
-        <div class="wf-tip-date">${wfFmtDate(e.date)}</div>`;
-      tip.classList.add('show');
-      place(ev);
-    });
-    d.addEventListener('mousemove', place);
-    d.addEventListener('mouseleave', ()=> tip.classList.remove('show'));
-  });
+// ---- TAB 6: SCENARIO -----------------------------------------------------
+// Needs a model + the FP&A agent. Honest stub describing what will live here.
+function renderScenario(){
+  const ytdActual = lineItems.reduce((s,l)=>s+ytd(l.actuals),0);
+  const runRate = lineItems.reduce((s,l)=>s+ ytd(l.actuals) + avg(l.actuals)*(12-ACTUAL_MONTHS), 0);
+  const kpis = [
+    { l:'Full-Year Run-rate', v:fmt(runRate), s:'Current trajectory' },
+    { l:'YTD Actual', v:fmt(ytdActual), s:'Jan–May' },
+    { l:'AOP Plan', v:'Not loaded', s:'Needed for gap', cls:'fl' },
+    { l:'Gap to Plan', v:'—', s:'Needs AOP', cls:'fl' },
+  ];
+  document.getElementById('scnKpis').innerHTML = kpis.map(k=>
+    `<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val ${k.cls||''}">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
+  document.getElementById('scnNote').innerHTML =
+    `<b>Scenario planning — coming next.</b> This tab will let a leader toggle cost levers (defer a hire, trim a vendor, hold T&E) to see the effect on the full-year landing versus AOP, `+
+    `and surface anomalies the FP&A agent finds (double-counted spend, duplicate vendors). It needs the AOP loaded and the levers modeled. The run-rate above is the starting point.`;
 }
-
-function wfRenderAll(){
-  wfRenderKPIs();
-  wfRenderTimeline();
-  wfRenderCensus();
-}
-
-function wfInit(){
-  if (!wfWired){
-    document.querySelectorAll('#wfTypeChips .wf-chip').forEach(c=>{
-      c.addEventListener('click', ()=>{
-        document.querySelectorAll('#wfTypeChips .wf-chip').forEach(x=>x.classList.remove('active'));
-        c.classList.add('active'); wfTypeFilter = c.dataset.type; wfRenderAll();
-      });
-    });
-    document.querySelectorAll('#wfLaborChips .wf-chip').forEach(c=>{
-      c.addEventListener('click', ()=>{
-        document.querySelectorAll('#wfLaborChips .wf-chip').forEach(x=>x.classList.remove('active'));
-        c.classList.add('active'); wfLaborFilter = c.dataset.labor; wfRenderAll();
-      });
-    });
-    wfWired = true;
-  }
-  const note = document.getElementById('wfNote');
-  if (note) note.innerHTML =
-    `<b>Reading this:</b> dots above the line are hires, below are exits. A filled dot is indirect labor, `+
-    `a ring is direct. Stacked columns mean several moves in the same stretch (see Field Ops). The blue curve `+
-    `underneath is the running headcount, so you get the census level and the period-over-period flow in one view. `+
-    `Scope follows the department selector at the top. <b>Sample data</b> for review; the live version reads from a personnel-events table.`;
-  wfRenderKPIs();
-}
-
-let wfResizeT;
-window.addEventListener('resize', ()=>{ clearTimeout(wfResizeT); wfResizeT = setTimeout(()=>{
-  const p = document.getElementById('panel-workforce');
-  if (p && p.classList.contains('active')){ wfRenderTimeline(); wfRenderCensus(); }
-}, 120); });
 
 // =============================================================
-// AUTH GATE + INIT
+// TAB SWITCHING + DEPARTMENT SELECTOR (real backend)
 // =============================================================
-function showLogin(msg){
-  document.getElementById('appShell').style.display = 'none';
-  document.getElementById('loginScreen').style.display = 'flex';
-  if (msg) document.getElementById('loginError').textContent = msg;
+const TAB_TITLES = {
+  pnl:['Department P&L','Operating cost by category'],
+  payroll:['Payroll','Labor cost and roster'],
+  vendors:['Vendors','External vendor spend'],
+  te:['Travel & Entertainment','T&E by GL line'],
+  budget:['Budget','Actuals, run-rate and plan'],
+  scenario:['Scenario','Plan to land on AOP'],
+};
+let activeTab = 'pnl';
+
+function showTab(name, el){
+  activeTab = name;
+  document.querySelectorAll('.tab,.nav-item[data-tab]').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll(`.tab[data-tab="${name}"],.nav-item[data-tab="${name}"]`).forEach(e=>e.classList.add('active'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  // charts must render while visible
+  renderActiveTab();
 }
 
-// Populate the department selector based on what the user can see.
-// Shows "IT Consolidated" + each child when >1 dept; hides (single option) otherwise.
+// render whichever tab is active (charts need to draw while the panel is shown)
+function renderActiveTab(){
+  switch(activeTab){
+    case 'pnl': renderPnl(); renderPnlCharts(); break;
+    case 'payroll': renderPayroll(); break;
+    case 'vendors': renderVendors(); break;
+    case 'te': renderTe(); break;
+    case 'budget': renderBudget(); break;
+    case 'scenario': renderScenario(); break;
+  }
+}
+
+// Department selector (consolidated + drill), same model as before.
 function renderDeptSelector(){
   const sel = document.getElementById('deptSelect');
   if (!sel) return;
@@ -1522,117 +688,99 @@ function renderDeptSelector(){
   }
   sel.innerHTML = opts;
   sel.value = activeDept;
-  // reflect selection in the page title + forecast availability
-  updateDeptHeading();
+  updateHeadings();
 }
 
-function updateDeptHeading(){
+function updateHeadings(){
   const isAll = activeDept === '__ALL__';
-  const consolTitle = isAdminUser ? 'All Departments · Consolidated' : 'Consolidated View';
-  const title = isAll ? consolTitle : `${activeDept} · ${deptName(activeDept)}`;
-  const tEl = document.querySelector('.page-title'); if (tEl) tEl.textContent = title;
-  // In consolidated mode the line-level forecast editor is not meaningful; show a notice.
-  const fcNote = document.getElementById('fcConsolidatedNote');
-  if (fcNote) fcNote.style.display = isAll ? 'block' : 'none';
-  const fcTable = document.getElementById('forecastTable');
-  if (fcTable) fcTable.style.display = isAll ? 'none' : '';
-  applyIdentity();
+  const scopeName = isAll ? (isAdminUser ? 'All Departments · Consolidated' : 'Consolidated View') : `${activeDept} · ${deptName(activeDept)}`;
+  // page title shows tab name; subtitle shows scope + identity
+  const t = TAB_TITLES[activeTab] || ['',''];
+  const titleEl = document.getElementById('pageTitle'); if (titleEl) titleEl.textContent = t[0];
+  const subEl = document.getElementById('pageSub');
+  if (subEl) subEl.textContent = `${scopeName} · ${userIdentity.name}${userIdentity.title?', '+userIdentity.title:''} · May 2026 close`;
+  // sidebar department label
+  const navLabel = document.getElementById('navDeptLabel');
+  if (navLabel) navLabel.textContent = isAll ? (isAdminUser?'All Departments':'My Departments') : deptName(activeDept);
+  const navRev = document.getElementById('navReviewer');
+  if (navRev) navRev.textContent = `${shortName(userIdentity.name)}${userIdentity.title?', '+userIdentity.title:''}`;
 }
 
-// User picked a different department in the dropdown.
 async function switchDept(val){
   activeDept = val;
   applyActiveDept();
-  // reload the forecast for the newly targeted department (skip in consolidated mode)
-  if (activeDept !== '__ALL__'){ await loadForecastForDept(); }
-  // re-render everything from the new view (actuals already in memory)
-  renderSpend();
-  renderMix();
-  renderTrend();
-  renderTE();
-  renderForecast();
-  updateDeptHeading();
-  if (document.getElementById('panel-workforce') && document.getElementById('panel-workforce').classList.contains('active')) wfRenderAll();
+  renderDeptSelector();
+  renderActiveTab();
 }
 
 async function renderDashboard(){
   await loadAll();
   renderDeptSelector();
-  applyIdentity();
-  renderSpend();
-  renderMix();
-  renderTrend();
-  renderTE();
-  renderForecast();
-  renderOrg();
-  wfInit();
+  renderActiveTab();
+}
+
+// =============================================================
+// AUTH GATE + INIT
+// =============================================================
+function showLogin(msg){
+  const app = document.getElementById('appShell'); if (app) app.style.display='none';
+  const login = document.getElementById('loginScreen'); if (login) login.style.display='flex';
+  if (msg){ const e=document.getElementById('loginError'); if(e) e.textContent=msg; }
 }
 
 async function enterApp(session){
-  // set reviewer identity from the signed-in email
   const email = session?.user?.email || 'user';
   const namePart = email.split('@')[0];
   userIdentity = USER_IDENTITY[email.toLowerCase()] || { name: namePart.charAt(0).toUpperCase()+namePart.slice(1), title:'' };
   REVIEWER = userIdentity.name;
   await resolveDepartments(email);
-  document.getElementById('topbarUser').textContent = email;
-  // avatar: initials from the resolved display name
-  const initials = userIdentity.name.split(/\s+/).map(p=>p[0]).slice(0,2).join('').toUpperCase();
-  document.getElementById('topbarAvatar').textContent = initials;
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('appShell').style.display = 'flex';
-  try {
-    await renderDashboard();
-  } catch(e){
-    console.error(e);
-    setConn(false, 'Load error');
-    toast('Could not load data — check that the schema was run', true);
-  }
+  const tu=document.getElementById('topbarUser'); if(tu) tu.textContent=email;
+  const ta=document.getElementById('topbarAvatar');
+  if(ta) ta.textContent = userIdentity.name.split(/\s+/).map(p=>p[0]).slice(0,2).join('').toUpperCase();
+  const login=document.getElementById('loginScreen'); if(login) login.style.display='none';
+  const app=document.getElementById('appShell'); if(app) app.style.display='flex';
+  try { await renderDashboard(); }
+  catch(e){ console.error(e); setConn(false,'Load error'); toast('Could not load data — check the connection', true); }
 }
 
 async function doLogin(){
   const email = document.getElementById('loginEmail').value.trim();
   const pass = document.getElementById('loginPass').value;
   const btn = document.getElementById('loginBtn');
-  document.getElementById('loginError').textContent = '';
-  if (!email || !pass){ document.getElementById('loginError').textContent = 'Enter your email and password.'; return; }
+  const err = document.getElementById('loginError'); if(err) err.textContent='';
+  if (!email || !pass){ if(err) err.textContent='Enter your email and password.'; return; }
   btn.disabled = true; btn.textContent = 'Signing in…';
   try {
     const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
     if (error) throw error;
     await enterApp(data.session);
-  } catch(e){
-    document.getElementById('loginError').textContent = 'Sign-in failed. Check your email and password.';
-  } finally {
-    btn.disabled = false; btn.textContent = 'Sign in';
-  }
+  } catch(e){ if(err) err.textContent='Sign-in failed. Check your email and password.'; }
+  finally { btn.disabled=false; btn.textContent='Sign in'; }
 }
 
 async function doSignOut(){
   try { await sb.auth.signOut(); } catch(e){}
-  // wipe in-memory data so nothing lingers
-  forecastState = {}; commentsState = {}; lineItems = []; reqs = []; reqLines = []; customLines = [];
-  document.getElementById('loginEmail').value = '';
-  document.getElementById('loginPass').value = '';
+  lineItems=[]; allLineItems=[]; visibleDepts=[]; activeDept=null;
+  const le=document.getElementById('loginEmail'); if(le) le.value='';
+  const lp=document.getElementById('loginPass'); if(lp) lp.value='';
   showLogin('You have been signed out.');
 }
 
 (async function boot(){
-  if (!CONFIGURED){
-    showLogin('Backend not configured. Add your Supabase URL and key in dashboard.js.');
-    document.getElementById('loginBtn').disabled = true;
-    return;
-  }
-  // wire login controls
-  document.getElementById('loginBtn').addEventListener('click', doLogin);
-  document.getElementById('loginPass').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
-  document.getElementById('loginEmail').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('loginPass').focus(); });
-  document.getElementById('signOutBtn').addEventListener('click', doSignOut);
-
-  // restore an existing session if present, else show login
+  if (!CONFIGURED){ showLogin('Backend not configured.'); const b=document.getElementById('loginBtn'); if(b) b.disabled=true; return; }
+  const lb=document.getElementById('loginBtn'); if(lb) lb.addEventListener('click', doLogin);
+  const lp=document.getElementById('loginPass'); if(lp) lp.addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+  const le=document.getElementById('loginEmail'); if(le) le.addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('loginPass').focus(); });
+  const so=document.getElementById('signOutBtn'); if(so) so.addEventListener('click', doSignOut);
+  // segmented P&L view toggle
+  document.querySelectorAll('#pnlSeg button').forEach(b=> b.addEventListener('click', ()=>{
+    document.querySelectorAll('#pnlSeg button').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active'); pnlView=b.dataset.v; renderPnl();
+  }));
   try {
     const { data } = await sb.auth.getSession();
-    if (data && data.session){ await enterApp(data.session); }
-    else { showLogin(); }
+    if (data && data.session){ await enterApp(data.session); } else { showLogin(); }
   } catch(e){ showLogin(); }
 })();
+
+window.addEventListener('resize', ()=>{ renderActiveTab(); });
