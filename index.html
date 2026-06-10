@@ -3,803 +3,649 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KBS Finance — FP&A Executive Dashboard · May 2026</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<title>KBS FP&A Workspace v2 — Department P&L (prototype)</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
-  --navy-800:#112040;--navy-700:#162B55;--navy-600:#1E3A6E;--navy-500:#2A4F8F;
-  --navy-400:#3D6BB5;--navy-300:#6B94D3;--navy-200:#A8C0E8;--navy-100:#D6E3F5;
+  --navy-800:#112040;--navy-700:#162B55;--navy-400:#3D6BB5;--navy-300:#6B94D3;--navy-200:#A8C0E8;
   --accent:#1A56A0;--accent-b:#2E6FCC;
-  --green:#1A7A4A;--green-bg:#E8F5EE;
-  --red:#B91C1C;--red-bg:#FEF2F2;
-  --amber:#B45309;--amber-bg:#FFFBEB;
-  --blue-bg:#EFF6FF;
-  --hire:#2563EB;--hire-soft:#DBEAFE;--term:#DC2626;--term-soft:#FEE2E2;
+  --green:#1A7A4A;--green-bg:#E8F5EE;--red:#B91C1C;--red-bg:#FEF2F2;
+  --amber:#B45309;--amber-bg:#FFFBEB;--blue-bg:#EFF6FF;
+  --commit:#7C3AED;--commit-bg:#F3E8FF;
   --border:1px solid #E2E8F0;
   --text:#0F172A;--muted:#64748B;--subtle:#94A3B8;--bg:#F8FAFC;
 }
 html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);font-size:13px;}
 .app{display:flex;height:100vh;overflow:hidden;}
-
-/* ── NAV ── */
-.nav{width:230px;background:var(--navy-800);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;}
+.nav{width:222px;background:var(--navy-800);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;}
 .nav-logo{padding:22px 22px 16px;border-bottom:1px solid rgba(255,255,255,.09);}
-.nav-logo-name{font-size:20px;font-weight:500;color:#fff;letter-spacing:.05em;}
-.nav-logo-sub{font-size:10px;color:var(--navy-300);margin-top:4px;text-transform:uppercase;letter-spacing:.1em;}
+.nav-logo-name{font-size:19px;font-weight:600;color:#fff;letter-spacing:.04em;}
+.nav-logo-sub{font-size:9px;color:var(--navy-300);margin-top:4px;text-transform:uppercase;letter-spacing:.12em;}
 .nav-sec{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--navy-400);padding:18px 22px 6px;font-weight:500;}
-.nav-item{display:flex;align-items:center;gap:11px;padding:10px 22px;font-size:13px;color:var(--navy-200);cursor:pointer;border-left:3px solid transparent;transition:background .12s,color .12s;user-select:none;}
+.nav-item{display:flex;align-items:center;gap:11px;padding:10px 22px;font-size:13px;color:var(--navy-200);cursor:pointer;border-left:3px solid transparent;transition:.12s;user-select:none;}
 .nav-item:hover{background:rgba(255,255,255,.06);color:#fff;}
 .nav-item.active{background:rgba(255,255,255,.1);color:#fff;border-left-color:#60A5FA;font-weight:500;}
 .ni{width:15px;height:15px;flex-shrink:0;opacity:.75;}
 .nav-item.active .ni{opacity:1;}
-.nav-footer{margin-top:auto;padding:16px 22px;border-top:1px solid rgba(255,255,255,.09);}
-.nf-lbl{font-size:9px;color:var(--navy-400);text-transform:uppercase;letter-spacing:.1em;}
-.nf-val{font-size:12px;color:var(--navy-200);margin-top:4px;display:flex;align-items:center;gap:7px;}
-.live-dot{width:7px;height:7px;border-radius:50%;background:#34D399;flex-shrink:0;animation:pulse 2s infinite;}
-.live-dot.off{background:#F59E0B;animation:none;}
-@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.5;}}
+.nav-foot{margin-top:auto;padding:16px 22px;border-top:1px solid rgba(255,255,255,.09);font-size:11px;color:var(--navy-300);line-height:1.5;}
 
-/* ── MAIN ── */
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden;}
 .topbar{background:#fff;border-bottom:var(--border);padding:10px 24px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
-.topbar-left{display:flex;align-items:center;gap:14px;}
-.psel{font-size:12px;background:var(--bg);border:var(--border);border-radius:6px;padding:5px 10px;color:var(--text);cursor:pointer;font-family:inherit;}
-.btn-gen{font-size:12px;background:var(--accent);color:#fff;border:none;border-radius:6px;padding:7px 16px;cursor:pointer;font-weight:500;font-family:inherit;transition:background .15s;}
-.btn-gen:hover{background:var(--accent-b);}
-.btn-gen:disabled{opacity:.5;cursor:not-allowed;}
-.btn-ghost{font-size:12px;background:#fff;color:var(--text);border:var(--border);border-radius:6px;padding:7px 14px;cursor:pointer;font-weight:500;font-family:inherit;transition:all .15s;}
-.btn-ghost:hover{border-color:var(--accent);color:var(--accent);}
-.topbar-right{display:flex;align-items:center;gap:10px;}
-.topbar-user{font-size:12px;color:var(--muted);}
-.avatar{width:28px;height:28px;border-radius:50%;background:var(--navy-700);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:500;color:var(--navy-200);}
+.topbar-left{display:flex;align-items:center;gap:12px;}
+.psel{font-size:12px;background:var(--bg);border:var(--border);border-radius:6px;padding:6px 10px;color:var(--text);cursor:pointer;font-family:inherit;}
+.proto-pill{font-size:10px;color:var(--amber);background:var(--amber-bg);padding:3px 10px;border-radius:99px;font-weight:500;}
+.content{flex:1;overflow-y:auto;padding:22px 24px 60px;display:flex;flex-direction:column;gap:18px;}
+.page-title{font-size:20px;font-weight:600;}
+.page-sub{font-size:12px;color:var(--muted);margin-top:2px;}
 
-/* ── CONTENT ── */
-.content{flex:1;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:20px;}
-.page-hdr{display:flex;align-items:flex-start;justify-content:space-between;}
-.page-title{font-size:20px;font-weight:500;color:var(--text);}
-.page-sub{font-size:12px;color:var(--muted);margin-top:3px;}
-.sync-badge{font-size:10px;color:var(--green);background:var(--green-bg);padding:3px 10px;border-radius:99px;display:flex;align-items:center;gap:5px;white-space:nowrap;}
-.sync-badge.off{color:var(--amber);background:var(--amber-bg);}
-
-/* ── TABS ── */
-.tabs{display:flex;border-bottom:var(--border);background:#fff;padding:0 4px;border-radius:10px 10px 0 0;border:var(--border);border-bottom:none;}
-.tab{padding:11px 20px;font-size:13px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;background:none;border-top:none;border-left:none;border-right:none;font-family:inherit;transition:color .12s;display:flex;align-items:center;gap:8px;}
+.tabs{display:flex;flex-wrap:wrap;border:var(--border);border-bottom:none;background:#fff;padding:0 4px;border-radius:10px 10px 0 0;}
+.tab{padding:11px 18px;font-size:13px;color:var(--muted);cursor:pointer;border:none;border-bottom:2px solid transparent;background:none;font-family:inherit;transition:.12s;display:flex;align-items:center;gap:8px;}
 .tab:hover{color:var(--text);}
 .tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:500;}
 .tab-num{font-family:'DM Mono',monospace;font-size:10px;color:var(--subtle);}
 .tab.active .tab-num{color:var(--accent);}
-
-.tab-panel{display:none;flex-direction:column;gap:16px;}
-.tab-panel.active{display:flex;animation:fade .25s ease;}
+.panel{display:none;flex-direction:column;gap:16px;}
+.panel.active{display:flex;animation:fade .25s ease;}
 @keyframes fade{from{opacity:0;transform:translateY(2px);}to{opacity:1;transform:none;}}
 
-/* ── VIEW TOGGLE ── */
-.view-toggle{display:inline-flex;background:#fff;border:var(--border);border-radius:8px;padding:3px;}
-.view-toggle button{border:none;background:none;padding:7px 16px;cursor:pointer;font-size:12px;font-weight:500;color:var(--muted);font-family:inherit;border-radius:6px;transition:all .15s;}
-.view-toggle button.active{background:var(--accent);color:#fff;}
+.seg{display:inline-flex;background:#fff;border:var(--border);border-radius:8px;padding:3px;}
+.seg button{border:none;background:none;padding:7px 14px;cursor:pointer;font-size:12px;font-weight:500;color:var(--muted);font-family:inherit;border-radius:6px;transition:.14s;}
+.seg button.active{background:var(--accent);color:#fff;}
 
-/* ── KPIS ── */
 .kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;}
 .kpi{background:#fff;border:var(--border);border-radius:10px;padding:14px 16px;}
 .kpi-label{font-size:11px;color:var(--muted);margin-bottom:5px;}
-.kpi-val{font-size:21px;font-weight:500;color:var(--text);font-family:'DM Mono',monospace;}
-.kpi-val.txt{font-family:'DM Sans',sans-serif;font-size:17px;}
+.kpi-val{font-size:22px;font-weight:500;font-family:'DM Mono',monospace;}
+.kpi-val.txt{font-family:'DM Sans',sans-serif;font-size:16px;}
 .kpi-delta{font-size:11px;margin-top:4px;}
-.up{color:var(--green);}.dn{color:var(--red);}.fl{color:var(--muted);}
 .kpi-sub{font-size:10px;color:var(--subtle);margin-top:3px;}
+.up{color:var(--green);}.dn{color:var(--red);}.fl{color:var(--muted);}
 
-/* ── CARDS ── */
 .card{background:#fff;border:var(--border);border-radius:10px;}
-.card-header{padding:13px 18px 11px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:space-between;}
-.card-title{font-size:12.5px;font-weight:500;color:var(--text);}
+.card-header{padding:13px 18px 11px;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+.card-title{font-size:12.5px;font-weight:500;}
 .card-sub{font-size:11px;color:var(--muted);margin-top:2px;}
 .card-body{padding:16px 18px;}
 .two{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;}
-.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;}
 
-/* ── BADGES ── */
 .badge{font-size:10px;padding:2px 8px;border-radius:99px;font-weight:500;white-space:nowrap;display:inline-block;}
-.bok{background:var(--green-bg);color:var(--green);}
-.bwarn{background:var(--amber-bg);color:var(--amber);}
-.brisk{background:var(--red-bg);color:var(--red);}
-.binfo{background:var(--blue-bg);color:var(--accent);}
-.bmuted{background:#F1F5F9;color:var(--muted);}
+.bok{background:var(--green-bg);color:var(--green);}.bwarn{background:var(--amber-bg);color:var(--amber);}
+.brisk{background:var(--red-bg);color:var(--red);}.binfo{background:var(--blue-bg);color:var(--accent);}.bmuted{background:#F1F5F9;color:var(--muted);}
 
-/* ── CATEGORY TAGS ── */
-.cat-tag{font-size:9px;padding:1px 7px;border-radius:99px;font-weight:500;margin-left:6px;text-transform:uppercase;letter-spacing:.04em;}
-.cat-benefits{background:#DBEAFE;color:#1E40AF;}
-.cat-service{background:#DCF5E8;color:#166534;}
-.cat-prof{background:#F3E8FF;color:#6B21A8;}
-.cat-te{background:#FFE4E6;color:#9F1239;}
-.cat-other{background:#FFEDD5;color:#9A3412;}
-
-/* ── TABLES ── */
-.table-wrap{background:#fff;border:var(--border);border-radius:10px;overflow:hidden;}
 .tbl{width:100%;border-collapse:collapse;font-size:12px;}
 .tbl thead tr{background:#F8FAFC;border-bottom:var(--border);}
-.tbl th{padding:9px 12px;text-align:left;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;white-space:nowrap;}
-.tbl th.num-h{text-align:right;}
-.tbl tbody tr{border-bottom:1px solid #F8FAFC;transition:background .1s;}
-.tbl tbody tr:last-child{border-bottom:none;}
-.tbl tbody tr:hover{background:#F8FAFC;}
-.tbl td{padding:10px 12px;color:var(--text);vertical-align:middle;}
-.tbl td.num{text-align:right;font-family:'DM Mono',monospace;font-size:12px;}
-.tbl td.strong{font-weight:500;}
+.tbl th{padding:9px 12px;text-align:left;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;}
+.tbl th.r{text-align:right;}
+.tbl tbody tr{border-bottom:1px solid #F8FAFC;}
+.tbl tbody tr:hover{background:#FCFDFE;}
+.tbl td{padding:9px 12px;vertical-align:middle;}
+.tbl td.r{text-align:right;font-family:'DM Mono',monospace;}
+.tbl td.strong{font-weight:600;}
 .tbl td.dim{color:var(--muted);}
-.tbl tfoot td{background:#F8FAFC;border-top:1px solid #E2E8F0;font-weight:500;padding:10px 12px;font-size:12px;}
-.tbl tfoot td.num{font-family:'DM Mono',monospace;}
-.var-pos{color:var(--red);font-weight:500;}
-.var-neg{color:var(--green);font-weight:500;}
-.var-zero{color:var(--muted);}
+.tbl tr.grp td{background:#F1F5F9;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:7px 12px;}
+.tbl tr.sub td{font-weight:600;border-top:1px solid #E2E8F0;background:#FCFDFE;}
+.tbl tfoot td{background:#0F172A;color:#fff;font-weight:600;padding:11px 12px;}
+.tbl tfoot td.r{font-family:'DM Mono',monospace;}
+.vpos{color:var(--red);font-weight:500;}.vneg{color:var(--green);font-weight:500;}.vzero{color:var(--muted);}
+.cellinput{width:84px;border:1px solid #E2E8F0;border-radius:5px;padding:5px 7px;font-family:'DM Mono',monospace;font-size:12px;text-align:right;outline:none;}
+.cellinput:focus{border-color:var(--accent);}
+.tbl-wrap{background:#fff;border:var(--border);border-radius:10px;overflow-x:auto;}
 
-/* ── INITIAL AVATARS ── */
-.init{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:500;flex-shrink:0;margin-right:8px;vertical-align:middle;}
-.init-a{background:#DBEAFE;color:#1E40AF;}
-.init-b{background:#DCF5E8;color:#166534;}
-.init-c{background:#F0F9FF;color:#0369A1;}
-.init-d{background:#FEF9C3;color:#854D0E;}
-.init-e{background:#ECFDF5;color:#065F46;}
-.init-f{background:#FFE4E6;color:#9F1239;}
-.init-g{background:#F3E8FF;color:#6B21A8;}
-.init-h{background:#FFEDD5;color:#9A3412;}
-.emp-row{display:flex;align-items:center;}
-.emp-name{font-weight:500;}
+.chart-box{position:relative;height:260px;}
+.chart-box.short{height:230px;}
 
-/* ── CHARTS ── */
-.chart-box{position:relative;height:280px;}
-.chart-box.tall{height:340px;}
-.chart-box.short{height:240px;}
+.note{font-size:11px;color:var(--muted);background:var(--blue-bg);border:1px solid #DBEAFE;border-radius:9px;padding:11px 14px;line-height:1.55;}
+.note b{color:var(--accent);font-weight:600;}
 
-/* ── FORECAST GRID ── */
-.forecast-table-wrap{background:#fff;border:var(--border);border-radius:10px;overflow-x:auto;}
-.ftbl{width:100%;border-collapse:collapse;font-size:12px;min-width:1100px;}
-.ftbl th{padding:9px 10px;font-size:10px;font-weight:500;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;background:#F8FAFC;border-bottom:var(--border);white-space:nowrap;text-align:right;}
-.ftbl th.lbl-h{text-align:left;position:sticky;left:0;background:#F8FAFC;z-index:2;}
-.ftbl th.actual-h{color:var(--subtle);}
-.ftbl th.fcst-h{color:var(--accent);}
-.ftbl td{padding:0;border-bottom:1px solid #F1F5F9;text-align:right;position:relative;}
-.ftbl td.lbl{padding:9px 10px;text-align:left;font-weight:500;position:sticky;left:0;background:#fff;z-index:1;white-space:nowrap;}
-.ftbl tr:hover td.lbl{background:#F8FAFC;}
-.ftbl td.actual-cell{padding:9px 10px;font-family:'DM Mono',monospace;color:var(--muted);background:#FCFCFD;}
-.ftbl tfoot td{background:#F8FAFC;border-top:1px solid #E2E8F0;font-weight:500;padding:9px 10px;font-family:'DM Mono',monospace;}
-.ftbl tfoot td.lbl{font-family:'DM Sans',sans-serif;}
-.fcst-cell{position:relative;}
-.fcst-input{width:100%;border:none;background:transparent;text-align:right;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);padding:9px 18px 9px 10px;outline:none;}
-.fcst-cell:hover{background:#EFF6FF;}
-.fcst-input:focus{background:#fff;box-shadow:inset 0 0 0 2px var(--accent);border-radius:4px;}
-.row-section{background:#F1F5F9;}
-.row-section td{padding:7px 10px;font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);}
-.sec-wrap{display:flex;align-items:center;justify-content:space-between;width:100%;}
-.sec-label{display:inline-block;}
-.sec-add{height:22px;padding:0 10px;border-radius:6px;border:1px solid var(--accent);background:#fff;color:var(--accent);font-size:11px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:4px;font-weight:500;flex-shrink:0;text-transform:none;letter-spacing:0;transition:all .12s;white-space:nowrap;}
-.sec-add:hover{background:var(--accent);color:#fff;}
-.row-hayden td.lbl{color:var(--accent);}
-.row-hayden td.lbl::after{content:'NEW';font-size:8px;background:var(--blue-bg);color:var(--accent);padding:1px 5px;border-radius:99px;margin-left:7px;letter-spacing:.05em;font-weight:500;vertical-align:middle;}
-.row-custom td.lbl{color:var(--text);}
-.line-del{border:none;background:none;color:var(--subtle);font-size:14px;line-height:1;cursor:pointer;margin-left:8px;padding:0 2px;vertical-align:middle;}
-.line-del:hover{color:var(--red);}
-
-/* comment dot indicator on cells */
-.cmt-dot{position:absolute;top:5px;right:5px;width:6px;height:6px;border-radius:50%;background:var(--amber);cursor:pointer;z-index:2;}
-.cmt-trigger{position:absolute;top:50%;right:4px;transform:translateY(-50%);width:14px;height:14px;opacity:0;cursor:pointer;color:var(--subtle);transition:opacity .12s;z-index:2;}
-.fcst-cell:hover .cmt-trigger,.actual-cell:hover .cmt-trigger{opacity:.6;}
-.cmt-trigger:hover{opacity:1!important;color:var(--accent);}
-
-.editor-bar{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#fff;border:var(--border);border-radius:8px;}
-.legend{display:flex;gap:16px;font-size:11px;color:var(--muted);align-items:center;}
-.legend-swatch{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:middle;}
-
-.toast{position:fixed;top:18px;right:18px;background:var(--green);color:#fff;padding:10px 16px;font-size:12px;border-radius:8px;opacity:0;transform:translateY(-8px);transition:all .25s;z-index:2000;box-shadow:0 4px 12px rgba(0,0,0,.15);}
-.toast.show{opacity:1;transform:none;}
-.toast.err{background:var(--red);}
-
-/* ── COMMENT POPOVER ── */
-.cmt-overlay{position:fixed;inset:0;background:rgba(15,23,42,.18);z-index:1500;display:none;}
-.cmt-overlay.show{display:block;}
-.cmt-pop{position:absolute;width:300px;background:#fff;border:var(--border);border-radius:10px;box-shadow:0 12px 32px rgba(15,23,42,.18);z-index:1600;overflow:hidden;}
-.cmt-pop-hdr{padding:11px 14px;border-bottom:1px solid #F1F5F9;display:flex;justify-content:space-between;align-items:flex-start;}
-.cmt-pop-title{font-size:12px;font-weight:500;}
-.cmt-pop-sub{font-size:10px;color:var(--muted);margin-top:2px;}
-.cmt-close{cursor:pointer;color:var(--subtle);font-size:16px;line-height:1;border:none;background:none;padding:0;}
-.cmt-list{max-height:200px;overflow-y:auto;padding:6px 0;}
-.cmt-item{padding:8px 14px;border-bottom:1px solid #F8FAFC;}
-.cmt-item:last-child{border-bottom:none;}
-.cmt-item-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;}
-.cmt-author{font-size:11px;font-weight:500;color:var(--accent);}
-.cmt-time{font-size:9px;color:var(--subtle);}
-.cmt-text{font-size:12px;color:var(--text);line-height:1.4;white-space:pre-wrap;word-break:break-word;}
-.cmt-empty{padding:14px;font-size:11px;color:var(--subtle);text-align:center;}
-.cmt-compose{padding:10px 14px;border-top:1px solid #F1F5F9;background:#FAFBFC;}
-.cmt-compose textarea{width:100%;border:var(--border);border-radius:6px;padding:8px;font-family:inherit;font-size:12px;resize:vertical;min-height:54px;outline:none;color:var(--text);}
-.cmt-compose textarea:focus{border-color:var(--accent);}
-.cmt-compose-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px;}
-.cmt-del{font-size:9px;color:var(--subtle);cursor:pointer;border:none;background:none;padding:0;margin-top:4px;}
-.cmt-del:hover{color:var(--red);}
-
-/* ── REQUISITION MODAL ── */
-.req-overlay{position:fixed;inset:0;background:rgba(15,23,42,.28);z-index:1700;display:none;align-items:center;justify-content:center;padding:20px;}
-.req-overlay.show{display:flex;}
-.req-modal{background:#fff;border-radius:12px;width:100%;max-width:440px;box-shadow:0 20px 60px rgba(15,23,42,.3);overflow:hidden;}
-.req-modal-hdr{padding:16px 20px;border-bottom:1px solid #F1F5F9;display:flex;justify-content:space-between;align-items:flex-start;}
-.req-modal-title{font-size:15px;font-weight:500;color:var(--text);}
-.req-modal-sub{font-size:11px;color:var(--muted);margin-top:3px;}
-.req-modal-body{padding:18px 20px;display:flex;flex-direction:column;gap:14px;}
-.req-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
-.req-field label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:5px;font-weight:500;}
-.req-field input{width:100%;border:var(--border);border-radius:8px;padding:9px 11px;font-family:inherit;font-size:13px;color:var(--text);outline:none;transition:border-color .15s;}
-.req-field input:focus{border-color:var(--accent);}
-.req-preview{font-size:11px;color:var(--accent);background:var(--blue-bg);border-radius:8px;padding:9px 11px;display:none;}
-.req-preview.show{display:block;}
-.req-error{font-size:11px;color:var(--red);min-height:14px;}
-.req-modal-foot{padding:14px 20px;border-top:1px solid #F1F5F9;background:#FAFBFC;display:flex;justify-content:flex-end;gap:10px;}
-
-.org-node.req{border:1px dashed var(--accent);background:#F5F9FF;}
-.org-node.req .org-node-role{color:var(--accent);}
-.org-node-badge{position:absolute;top:-9px;left:-6px;font-size:8px;background:var(--amber);color:#fff;padding:2px 7px;border-radius:99px;letter-spacing:.03em;font-weight:500;}
-.org-req-del{position:absolute;top:-8px;right:-7px;width:18px;height:18px;border-radius:50%;background:#fff;border:var(--border);color:var(--muted);font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;}
-.org-req-del:hover{color:var(--red);border-color:var(--red);}
-.org-node{position:relative;}
-
-/* ── ORG CHART ── */
-.org-wrap{padding:8px 0;overflow-x:auto;}
-.org-tree{display:flex;flex-direction:column;align-items:center;gap:0;min-width:900px;}
-.org-node{background:#fff;border:var(--border);border-radius:10px;padding:12px 16px;text-align:center;min-width:160px;box-shadow:0 1px 2px rgba(15,23,42,.04);position:relative;}
-.org-node-role{font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:3px;font-weight:500;}
-.org-node-name{font-size:13px;font-weight:500;color:var(--text);}
-.org-node-meta{font-size:10px;color:var(--subtle);margin-top:3px;}
-.org-node.exec{background:var(--navy-800);border-color:var(--navy-800);}
-.org-node.exec .org-node-role{color:var(--navy-300);}
-.org-node.exec .org-node-name{color:#fff;}
-.org-node.exec .org-node-meta{color:var(--navy-200);}
-.org-node.lead{border-left:3px solid var(--accent);}
-.org-node.incoming{border:1px solid var(--accent);background:var(--blue-bg);}
-.org-node-date{position:absolute;top:-9px;right:-6px;font-size:8px;background:var(--accent);color:#fff;padding:2px 7px;border-radius:99px;letter-spacing:.03em;font-weight:500;white-space:nowrap;}
-.org-connector{width:1px;height:22px;background:#CBD5E1;}
-.org-hbar-wrap{display:flex;justify-content:center;}
-.org-row{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;align-items:flex-start;}
-.org-section-label{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--subtle);margin:16px 0 10px;font-weight:500;}
-.org-branch{display:flex;flex-direction:column;align-items:center;}
-.org-sub{display:flex;gap:14px;margin-top:0;}
-.org-node.sub{min-width:140px;padding:10px 14px;}
-.org-node.sub .org-node-name{font-size:12px;}
-
-::-webkit-scrollbar{width:6px;height:6px;}
-::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:#E2E8F0;border-radius:99px;}
-::-webkit-scrollbar-thumb:hover{background:#CBD5E1;}
-
-/* ── LOGIN ── */
-.login-screen{position:fixed;inset:0;background:var(--navy-800);display:flex;align-items:center;justify-content:center;z-index:3000;padding:20px;}
-.login-card{background:#fff;border-radius:14px;padding:34px 32px 26px;width:100%;max-width:360px;box-shadow:0 20px 60px rgba(0,0,0,.35);}
-.login-logo{font-size:26px;font-weight:500;letter-spacing:.06em;color:var(--navy-800);}
-.login-title{font-size:16px;font-weight:500;color:var(--text);margin-top:14px;}
-.login-sub{font-size:12px;color:var(--muted);margin-top:3px;margin-bottom:20px;}
-.login-field{margin-bottom:14px;}
-.login-field label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:5px;font-weight:500;}
-.login-field input{width:100%;border:var(--border);border-radius:8px;padding:10px 12px;font-family:inherit;font-size:13px;color:var(--text);outline:none;transition:border-color .15s;}
-.login-field input:focus{border-color:var(--accent);}
-.login-btn{width:100%;padding:11px;font-size:13px;margin-top:4px;}
-.login-error{font-size:11px;color:var(--red);min-height:16px;margin-bottom:6px;}
-.login-foot{font-size:10px;color:var(--subtle);text-align:center;margin-top:16px;}
-
-/* ── WORKFORCE TIMELINE ── */
-.wf-controls{display:flex;flex-wrap:wrap;align-items:center;gap:18px;}
-.wf-ctrl-group{display:flex;align-items:center;gap:8px;}
-.wf-ctrl-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--subtle);font-weight:500;}
-.wf-chips{display:inline-flex;background:#fff;border:var(--border);border-radius:8px;padding:3px;}
-.wf-chip{border:none;background:none;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:500;color:var(--muted);font-family:inherit;border-radius:6px;transition:all .14s;}
-.wf-chip.active{background:var(--accent);color:#fff;}
-.lg{display:inline-flex;align-items:center;gap:6px;}
-.lg-dot{width:10px;height:10px;border-radius:50%;}
-.lg-ring{width:10px;height:10px;border-radius:50%;background:#fff;box-shadow:inset 0 0 0 2px var(--subtle);}
-.wf-tl-svg,.wf-census-svg{display:block;width:100%;}
-.wf-dot{cursor:pointer;}
-.wf-dot:hover{stroke:#0F172A;stroke-width:1.5;}
-.wf-census-cap{font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:var(--subtle);font-weight:500;padding:8px 18px 0;}
-.wf-tip{position:fixed;z-index:1800;pointer-events:none;background:#fff;border:var(--border);border-radius:9px;box-shadow:0 10px 30px rgba(15,23,42,.16);padding:10px 12px;min-width:190px;max-width:240px;opacity:0;transition:opacity .1s;}
-.wf-tip.show{opacity:1;}
-.wf-tip-name{font-size:13px;font-weight:500;}
-.wf-tip-role{font-size:11px;color:var(--muted);margin-top:1px;}
-.wf-tip-dept{font-size:11px;color:var(--muted);margin-top:2px;}
-.wf-tip-row{display:flex;align-items:center;gap:7px;margin-top:8px;flex-wrap:wrap;}
-.wf-tag{font-size:9px;padding:2px 8px;border-radius:99px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;}
-.wf-tag-hire{background:var(--hire-soft);color:#1D4ED8;}
-.wf-tag-term{background:var(--term-soft);color:#B91C1C;}
-.wf-tag-ind{background:#FEF3C7;color:#92400E;}
-.wf-tag-dir{background:#E2E8F0;color:#475569;}
-.wf-tip-date{font-size:11px;color:var(--subtle);margin-top:7px;font-family:'DM Mono',monospace;}
-.wf-note{font-size:11px;color:var(--muted);background:#fff;border:var(--border);border-radius:10px;padding:12px 16px;line-height:1.55;}
-.wf-note b{color:var(--text);font-weight:500;}
-
+/* levers + flags */
+.lever{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border:var(--border);border-radius:9px;background:#fff;}
+.lever input[type=checkbox]{margin-top:3px;width:15px;height:15px;accent-color:var(--accent);cursor:pointer;}
+.lever-main{flex:1;}
+.lever-t{font-size:12.5px;font-weight:500;}
+.lever-d{font-size:11px;color:var(--muted);margin-top:2px;}
+.lever-save{font-family:'DM Mono',monospace;font-size:13px;color:var(--green);font-weight:500;white-space:nowrap;}
+.flag{display:flex;gap:11px;padding:12px 14px;border:var(--border);border-left:3px solid var(--amber);border-radius:9px;background:#fff;}
+.flag.high{border-left-color:var(--red);}
+.flag-ico{width:26px;height:26px;border-radius:7px;background:var(--amber-bg);color:var(--amber);display:flex;align-items:center;justify-content:center;font-weight:600;flex-shrink:0;}
+.flag.high .flag-ico{background:var(--red-bg);color:var(--red);}
+.flag-t{font-size:12.5px;font-weight:500;}
+.flag-d{font-size:11px;color:var(--muted);margin-top:2px;line-height:1.45;}
+.connect-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.btn{font-size:12px;border-radius:7px;padding:8px 14px;cursor:pointer;font-weight:500;font-family:inherit;border:var(--border);background:#fff;color:var(--text);}
+.btn.pri{background:var(--accent);color:#fff;border:none;}
+.stub{font-size:11px;color:var(--subtle);}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.scope{font-size:11px;color:var(--muted);}
+@media(max-width:880px){.kpi-grid{grid-template-columns:1fr 1fr;}.two,.grid-2{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
-
-<div class="toast" id="toast">Saved</div>
-<div class="wf-tip" id="wfTip"></div>
-
-<!-- LOGIN GATE -->
-<div class="login-screen" id="loginScreen">
-  <div class="login-card">
-    <div class="login-logo">KBS</div>
-    <div class="login-title">FP&amp;A Dashboard</div>
-    <div class="login-sub">Sign in to continue</div>
-    <div class="login-field">
-      <label for="loginEmail">Email</label>
-      <input type="email" id="loginEmail" autocomplete="username" placeholder="you@kbs-services.com">
-    </div>
-    <div class="login-field">
-      <label for="loginPass">Password</label>
-      <input type="password" id="loginPass" autocomplete="current-password" placeholder="••••••••">
-    </div>
-    <div class="login-error" id="loginError"></div>
-    <button class="btn-gen login-btn" id="loginBtn">Sign in</button>
-    <div class="login-foot">Authorized KBS Finance personnel only</div>
-  </div>
-</div>
-
-<!-- COMMENT POPOVER -->
-<div class="cmt-overlay" id="cmtOverlay" onclick="closeComment(event)">
-  <div class="cmt-pop" id="cmtPop" onclick="event.stopPropagation()">
-    <div class="cmt-pop-hdr">
-      <div>
-        <div class="cmt-pop-title" id="cmtPopTitle">Comment</div>
-        <div class="cmt-pop-sub" id="cmtPopSub"></div>
-      </div>
-      <button class="cmt-close" onclick="closeComment()">&times;</button>
-    </div>
-    <div class="cmt-list" id="cmtList"></div>
-    <div class="cmt-compose">
-      <textarea id="cmtInput" placeholder="Add context or a proposed adjustment…"></textarea>
-      <div class="cmt-compose-actions">
-        <button class="btn-gen" id="cmtSaveBtn" onclick="submitComment()">Add comment</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- REQUISITION MODAL -->
-<div class="req-overlay" id="reqOverlay" onclick="closeReq(event)">
-  <div class="req-modal" onclick="event.stopPropagation()">
-    <div class="req-modal-hdr">
-      <div>
-        <div class="req-modal-title">Add Requisition</div>
-        <div class="req-modal-sub">Open role · flows into the forecast at salary midpoint</div>
-      </div>
-      <button class="cmt-close" onclick="closeReq()">&times;</button>
-    </div>
-    <div class="req-modal-body">
-      <div class="req-field">
-        <label for="reqTitle">Title</label>
-        <input type="text" id="reqTitle" placeholder="e.g. Senior Financial Analyst">
-      </div>
-      <div class="req-field">
-        <label for="reqReports">Reports to</label>
-        <input type="text" id="reqReports" placeholder="e.g. Timothy Moynihan, or Ben Fremont">
-      </div>
-      <div class="req-row">
-        <div class="req-field">
-          <label for="reqLow">Salary range — low</label>
-          <input type="text" id="reqLow" inputmode="numeric" placeholder="$90,000">
-        </div>
-        <div class="req-field">
-          <label for="reqHigh">Salary range — high</label>
-          <input type="text" id="reqHigh" inputmode="numeric" placeholder="$110,000">
-        </div>
-      </div>
-      <div class="req-row">
-        <div class="req-field">
-          <label for="reqBonus">Bonus % (optional)</label>
-          <input type="text" id="reqBonus" inputmode="numeric" placeholder="10">
-        </div>
-        <div class="req-field">
-          <label for="reqStart">Target start date</label>
-          <input type="date" id="reqStart">
-        </div>
-      </div>
-      <div class="req-preview" id="reqPreview"></div>
-      <div class="req-error" id="reqError"></div>
-    </div>
-    <div class="req-modal-foot">
-      <button class="btn-ghost" onclick="closeReq()">Cancel</button>
-      <button class="btn-gen" id="reqSaveBtn" onclick="submitReq()">Add requisition</button>
-    </div>
-  </div>
-</div>
-
-<div class="app" id="appShell" style="display:none;">
-
-  <!-- ── SIDEBAR ── -->
+<div class="app">
   <nav class="nav">
     <div class="nav-logo">
       <div class="nav-logo-name">KBS</div>
-      <div class="nav-logo-sub">FP&amp;A Dashboard</div>
+      <div class="nav-logo-sub">FP&amp;A Workspace v2</div>
     </div>
     <div class="nav-sec">Department</div>
-    <div class="nav-item active">
+    <div class="nav-item active" style="cursor:default">
       <svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
-      <span id="navDeptLabel">Financial Planning &amp; Analysis</span>
+      Field Operations
     </div>
     <div class="nav-sec">Views</div>
-    <div class="nav-item" onclick="showTab('spend',this)" data-tab="spend">
-      <svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V3M2 13h12M4 10v1M7 7v4M10 5v6M13 8v3"/></svg>
-      YTD Spend
-    </div>
-    <div class="nav-item" onclick="showTab('te',this)" data-tab="te">
-      <svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5z"/><path d="M5 5V3a3 3 0 0 1 6 0v2"/></svg>
-      T&amp;E Analysis
-    </div>
-    <div class="nav-item" onclick="showTab('forecast',this)" data-tab="forecast">
-      <svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12 6 8l3 3 5-7"/><circle cx="6" cy="8" r="1"/><circle cx="9" cy="11" r="1"/></svg>
-      Forecast
-    </div>
-    <div class="nav-item" onclick="showTab('org',this)" data-tab="org">
-      <svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="3" r="2"/><circle cx="3" cy="12" r="2"/><circle cx="13" cy="12" r="2"/><path d="M8 5v3M5 10l2-2M11 10 9 8"/></svg>
-      Org Chart
-    </div>
-    <div class="nav-item" onclick="showTab('workforce',this)" data-tab="workforce">
-      <svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5.5" cy="5" r="2"/><circle cx="11" cy="6" r="1.6"/><path d="M2 13c0-2.2 1.6-3.5 3.5-3.5S9 10.8 9 13M9.5 12.8c.1-1.7 1.1-2.8 2.6-2.8 1.4 0 2.4 1 2.4 2.8"/></svg>
-      Workforce
-    </div>
-    <div class="nav-footer">
-      <div class="nf-lbl">Period</div>
-      <div class="nf-val"><span class="live-dot"></span>FY26 · YTD May</div>
-      <div class="nf-lbl" style="margin-top:10px;">Reviewer</div>
-      <div class="nf-val" id="navReviewer">B. Fremont, VP FP&amp;A</div>
-    </div>
+    <div class="nav-item active" data-tab="pnl" onclick="showTab('pnl',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V3M2 13h12M4 10v1M7 7v4M10 5v6M13 8v3"/></svg>P&amp;L</div>
+    <div class="nav-item" data-tab="payroll" onclick="showTab('payroll',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2.3"/><path d="M2 13c0-2.4 1.8-3.8 4-3.8S10 10.6 10 13"/><path d="M11 5h3M11 8h3M11 11h3"/></svg>Payroll</div>
+    <div class="nav-item" data-tab="vendors" onclick="showTab('vendors',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l1.5-3h9L14 6M2 6v7h12V6M2 6h12M6 9h4"/></svg>Vendors</div>
+    <div class="nav-item" data-tab="te" onclick="showTab('te',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5z"/><path d="M5 5V3a3 3 0 0 1 6 0v2"/></svg>T&amp;E</div>
+    <div class="nav-item" data-tab="budget" onclick="showTab('budget',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 6h12M6 6v8"/></svg>Budget</div>
+    <div class="nav-item" data-tab="scenario" onclick="showTab('scenario',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3v10h10"/><path d="M3 11l3-3 2 2 5-5"/></svg>Scenario</div>
+    <div class="nav-foot">Prototype on sample data. Wire to RDB, Workday and Concur per tab.</div>
   </nav>
 
-  <!-- ── MAIN ── -->
   <div class="main">
-
-    <!-- TOPBAR -->
     <div class="topbar">
       <div class="topbar-left">
-        <select class="psel" id="deptSelect" onchange="switchDept(this.value)">
-          <option>Financial Planning &amp; Analysis</option>
-        </select>
-        <select class="psel">
-          <option>FY2026</option>
-        </select>
-        <span class="sync-badge" id="connBadge"><span class="live-dot off"></span>Connecting…</span>
+        <select class="psel"><option>1020 · Field Operations</option></select>
+        <select class="psel"><option>FY2026</option></select>
       </div>
-      <div class="topbar-right">
-        <span class="topbar-user" id="topbarUser">Signed in</span>
-        <div class="avatar" id="topbarAvatar">··</div>
-        <button class="btn-ghost" id="signOutBtn" style="padding:5px 12px;">Sign out</button>
-      </div>
+      <span class="proto-pill">PROTOTYPE · sample data</span>
     </div>
 
-    <!-- CONTENT -->
     <div class="content">
-
-      <!-- HEADER -->
-      <div class="page-hdr">
-        <div>
-          <div class="page-title">Financial Planning &amp; Analysis</div>
-          <div class="page-sub" id="pageSub">Executive review · Ben Fremont, VP FP&amp;A · May 2026 close</div>
-        </div>
-        <span class="sync-badge" id="headerBadge"><span class="live-dot off"></span>Loading…</span>
+      <div>
+        <div class="page-title" id="pageTitle">Department P&amp;L</div>
+        <div class="page-sub" id="pageSub">Field Operations · FY2026 · through May close</div>
       </div>
 
-      <!-- TABS -->
       <div class="tabs">
-        <button class="tab active" onclick="showTab('spend',this)" data-tab="spend"><span class="tab-num">01</span>YTD Spend</button>
-        <button class="tab" onclick="showTab('te',this)" data-tab="te"><span class="tab-num">02</span>T&amp;E Analysis</button>
-        <button class="tab" onclick="showTab('forecast',this)" data-tab="forecast"><span class="tab-num">03</span>Forecast</button>
-        <button class="tab" onclick="showTab('org',this)" data-tab="org"><span class="tab-num">04</span>Org Chart</button>
-        <button class="tab" onclick="showTab('workforce',this)" data-tab="workforce"><span class="tab-num">05</span>Workforce</button>
+        <button class="tab active" data-tab="pnl" onclick="showTab('pnl',this)"><span class="tab-num">01</span>P&amp;L</button>
+        <button class="tab" data-tab="payroll" onclick="showTab('payroll',this)"><span class="tab-num">02</span>Payroll</button>
+        <button class="tab" data-tab="vendors" onclick="showTab('vendors',this)"><span class="tab-num">03</span>Vendors</button>
+        <button class="tab" data-tab="te" onclick="showTab('te',this)"><span class="tab-num">04</span>T&amp;E</button>
+        <button class="tab" data-tab="budget" onclick="showTab('budget',this)"><span class="tab-num">05</span>Budget</button>
+        <button class="tab" data-tab="scenario" onclick="showTab('scenario',this)"><span class="tab-num">06</span>Scenario</button>
       </div>
 
-      <!-- ══════════════ TAB 1: SPEND ══════════════ -->
-      <div class="tab-panel active" id="panel-spend">
-        <div class="view-toggle" id="viewToggle">
-          <button class="active" data-view="month">Current Month · May 2026</button>
-          <button data-view="ytd">Year-to-Date</button>
+      <!-- TAB 1 P&L -->
+      <div class="panel active" id="panel-pnl">
+        <div class="seg" id="pnlSeg">
+          <button class="active" data-v="mtd">Current Month · May 2026</button>
+          <button data-v="ytd">Year-to-Date</button>
         </div>
-        <div class="kpi-grid" id="kpiRow"></div>
-        <div class="two">
-          <div class="card">
-            <div class="card-header">
-              <div>
-                <div class="card-title">Spend by Category</div>
-                <div class="card-sub" id="catSub">May 2026 · Actuals vs. Budget</div>
-              </div>
-              <span class="badge binfo" id="catCount"></span>
-            </div>
-            <div class="card-body" style="padding:0;">
-              <table class="tbl">
-                <thead><tr>
-                  <th>Category</th>
-                  <th class="num-h" id="catPeriodHead">May 2026</th>
-                  <th class="num-h">Budget</th>
-                  <th class="num-h">Variance</th>
-                  <th>Status</th>
-                </tr></thead>
-                <tbody id="catTableBody"></tbody>
-                <tfoot><tr>
-                  <td class="strong">Total</td>
-                  <td class="num" id="catTotalActual"></td>
-                  <td class="num dim" id="catTotalBudget"></td>
-                  <td class="num" id="catTotalVar"></td>
-                  <td></td>
-                </tr></tfoot>
-              </table>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-header">
-              <div class="card-title">Cost Mix</div>
-              <div class="card-sub">By category · YTD Jan–May</div>
-            </div>
-            <div class="card-body"><div class="chart-box short"><canvas id="mixChart"></canvas></div></div>
-          </div>
+        <div class="kpi-grid" id="pnlKpis"></div>
+        <div class="tbl-wrap">
+          <table class="tbl" id="pnlTable"></table>
         </div>
         <div class="two">
           <div class="card">
-            <div class="card-header">
-              <div>
-                <div class="card-title">Vendor Detail</div>
-                <div class="card-sub" id="vendSub">May 2026 · Non-payroll vendors</div>
-              </div>
-            </div>
-            <div class="card-body" style="padding:0;">
-              <table class="tbl">
-                <thead><tr>
-                  <th>Vendor</th>
-                  <th>Category</th>
-                  <th class="num-h" id="vendPeriodHead">May 2026</th>
-                  <th class="num-h">YTD</th>
-                </tr></thead>
-                <tbody id="vendTableBody"></tbody>
-              </table>
-            </div>
+            <div class="card-header"><div><div class="card-title">Monthly Operating Cost</div><div class="card-sub">COR + OpEx · Jan–May 2026</div></div></div>
+            <div class="card-body"><div class="chart-box short"><canvas id="pnlBar"></canvas></div></div>
           </div>
           <div class="card">
-            <div class="card-header">
-              <div class="card-title">Monthly Total Spend</div>
-              <div class="card-sub">All categories · Jan–May 2026</div>
-            </div>
-            <div class="card-body"><div class="chart-box short"><canvas id="trendChart"></canvas></div></div>
+            <div class="card-header"><div><div class="card-title">Cost Mix</div><div class="card-sub">YTD · top subcategories</div></div></div>
+            <div class="card-body"><div class="chart-box short"><canvas id="pnlDonut"></canvas></div></div>
           </div>
         </div>
       </div>
 
-      <!-- ══════════════ TAB 2: T&E ══════════════ -->
-      <div class="tab-panel" id="panel-te">
-        <div class="kpi-grid">
-          <div class="kpi">
-            <div class="kpi-label">YTD T&amp;E Spend</div>
-            <div class="kpi-val" id="teYtdTotal"></div>
-            <div class="kpi-sub">Jan–May 2026</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">YTD T&amp;E Budget</div>
-            <div class="kpi-val" id="teBudget"></div>
-            <div class="kpi-sub" id="teBudgetSub"></div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">YTD Variance</div>
-            <div class="kpi-val" id="teVariance"></div>
-            <div class="kpi-delta" id="teVarDelta"></div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">Largest Line</div>
-            <div class="kpi-val txt" id="teTopLine"></div>
-            <div class="kpi-sub" id="teTopAmt"></div>
-          </div>
+      <!-- TAB 2 PAYROLL -->
+      <div class="panel" id="panel-payroll">
+        <div class="kpi-grid" id="payKpis"></div>
+        <div class="seg" id="paySeg">
+          <button class="active" data-c="salaried">Salaried</button>
+          <button data-c="hourly">Hourly</button>
         </div>
-        <div class="two">
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title" id="payTblTitle">Employee Details · Salaried</div><div class="card-sub">Leaders edit planned term and merit % to drive the forecast</div></div>
+            <span class="badge bmuted">Sample roster</span>
+          </div>
+          <div class="card-body" style="padding:0;"><div style="overflow-x:auto"><table class="tbl" id="payTable"></table></div></div>
+        </div>
+        <div class="grid-2">
           <div class="card">
-            <div class="card-header">
-              <div>
-                <div class="card-title">T&amp;E by Account</div>
-                <div class="card-sub">Year-to-Date · Jan–May 2026</div>
-              </div>
-            </div>
-            <div class="card-body" style="padding:0;">
-              <table class="tbl">
-                <thead><tr>
-                  <th>Account</th>
-                  <th class="num-h">Jan</th>
-                  <th class="num-h">Feb</th>
-                  <th class="num-h">Mar</th>
-                  <th class="num-h">Apr</th>
-                  <th class="num-h">May</th>
-                  <th class="num-h">YTD</th>
-                </tr></thead>
-                <tbody id="teTableBody"></tbody>
-              </table>
-            </div>
+            <div class="card-header"><div><div class="card-title">Headcount Roll-forward</div><div class="card-sub">Beginning to ending headcount · actual Jan–May, forecast Jun–Dec</div></div></div>
+            <div class="card-body" style="padding:0;"><div style="overflow-x:auto"><table class="tbl" id="hcTable"></table></div></div>
           </div>
-          <div style="display:flex;flex-direction:column;gap:16px;">
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">T&amp;E Monthly Trend</div>
-                <div class="card-sub">Actual · Jan–May 2026</div>
-              </div>
-              <div class="card-body"><div class="chart-box short"><canvas id="teTrendChart"></canvas></div></div>
-            </div>
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">Category Mix</div>
-                <div class="card-sub">YTD breakdown</div>
-              </div>
-              <div class="card-body"><div class="chart-box short"><canvas id="teCategoryChart"></canvas></div></div>
-            </div>
+          <div class="card">
+            <div class="card-header"><div><div class="card-title">Compensation Summary</div><div class="card-sub" id="compSub">Flows to Direct &amp; Indirect Labor on the P&amp;L</div></div></div>
+            <div class="card-body" style="padding:0;"><table class="tbl" id="compTable"></table></div>
+          </div>
+        </div>
+        <div class="note" id="payNote"></div>
+      </div>
+
+      <!-- TAB 3 VENDORS -->
+      <div class="panel" id="panel-vendors">
+        <div class="kpi-grid" id="venKpis"></div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">External Vendor Spend</div><div class="card-sub">Monthly, YTD and annualized run-rate per vendor</div></div><span class="badge bmuted">Sample vendors</span></div>
+          <div class="card-body" style="padding:0;"><div style="overflow-x:auto"><table class="tbl" id="venTable"></table></div></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Top Vendors · YTD</div></div></div>
+          <div class="card-body"><div class="chart-box short"><canvas id="venBar"></canvas></div></div>
+        </div>
+      </div>
+
+      <!-- TAB 4 T&E -->
+      <div class="panel" id="panel-te">
+        <div class="connect-row">
+          <button class="btn pri" onclick="alert('Concur connect is a stub in this prototype. See the chat for the integration path.')">Connect Concur</button>
+          <span class="stub">Not connected · committed (pre-booked) travel shown from sample data</span>
+        </div>
+        <div class="kpi-grid" id="teKpis"></div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Monthly Budget vs Actual + Committed</div><div class="card-sub">Future months show pre-booked travel against budget, so remaining is what is truly left</div></div></div>
+          <div class="card-body"><div class="chart-box"><canvas id="teBar"></canvas></div></div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header"><div><div class="card-title">By GL Account · YTD</div></div></div>
+            <div class="card-body" style="padding:0;"><table class="tbl" id="teGl"></table></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div><div class="card-title">Regional Rollup</div><div class="card-sub">RVP regions consolidating into the EVP budget</div></div></div>
+            <div class="card-body" style="padding:0;"><table class="tbl" id="teRegion"></table></div>
           </div>
         </div>
       </div>
 
-      <!-- ══════════════ TAB 3: FORECAST ══════════════ -->
-      <div class="tab-panel" id="panel-forecast">
-        <div class="kpi-grid">
-          <div class="kpi">
-            <div class="kpi-label">FY26 Forecast (Total)</div>
-            <div class="kpi-val" id="fcTotal"></div>
-            <div class="kpi-sub">All categories</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">YTD Actual</div>
-            <div class="kpi-val" id="fcYtd"></div>
-            <div class="kpi-sub">Jan–May 2026</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">Jun–Dec Forecast</div>
-            <div class="kpi-val" id="fcRemaining"></div>
-            <div class="kpi-sub">7 months</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">2026 Plan</div>
-            <div class="kpi-val" id="fcPlan"></div>
-            <div class="kpi-delta" id="fcPlanVar"></div>
-            <div class="kpi-sub" id="fcPlanSub"></div>
-          </div>
+      <!-- TAB 5 BUDGET -->
+      <div class="panel" id="panel-budget">
+        <div class="seg" id="budSeg">
+          <button class="active" data-v="AOP">AOP</button>
+          <button data-v="4+8">4+8</button>
+          <button data-v="6+6">6+6</button>
+          <button data-v="8+4">8+4</button>
         </div>
-
-        <div id="fcBackToPlan" style="display:none;"></div>
-
-        <div class="editor-bar">
-          <div class="legend">
-            <span><span class="legend-swatch" style="background:#FCFCFD;border:1px solid #E2E8F0;"></span>Actual (locked)</span>
-            <span><span class="legend-swatch" style="background:#EFF6FF;border:1px solid #BFDBFE;"></span>Forecast (editable)</span>
-            <span><span class="legend-swatch" style="background:var(--amber);"></span>Has comment</span>
-          </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn-ghost" id="exportBtn">Export snapshot</button>
-            <button class="btn-ghost" id="resetForecast">Reset forecast</button>
-            <button class="btn-gen" id="saveForecast">Save &amp; notify</button>
-          </div>
-        </div>
-
+        <div class="kpi-grid" id="budKpis"></div>
         <div class="card">
-          <div class="card-header">
-            <div>
-              <div class="card-title">Line-Item Forecast Editor</div>
-              <div class="card-sub">Click any blue cell to edit · Hover a cell and click the dot to comment · Auto-saves to cloud</div>
-            </div>
-            <span class="badge bok" id="autoSaveBadge">Auto-save on</span>
-          </div>
-          <div class="card-body" style="padding:0;">
-            <div id="fcConsolidatedNote" style="display:none;padding:24px;color:var(--muted);font-size:13px;text-align:center;">
-              You're viewing <strong>Consolidated</strong> across multiple departments. The line-item forecast editor works on one department at a time — pick a specific department from the selector at the top to edit its forecast.
-            </div>
-            <div class="forecast-table-wrap">
-              <table class="ftbl" id="forecastTable"></table>
-            </div>
-          </div>
+          <div class="card-header"><div><div class="card-title" id="budChartTitle">AOP vs Reforecast</div><div class="card-sub">Actuals carried in each reforecast; forecast for the balance of year</div></div></div>
+          <div class="card-body"><div class="chart-box"><canvas id="budBar"></canvas></div></div>
         </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <div class="card-title">FY2026 Forecast Curve</div>
-              <div class="card-sub">Total department spend · Actuals (Jan–May) and forecast (Jun–Dec)</div>
-            </div>
-          </div>
-          <div class="card-body"><div class="chart-box tall"><canvas id="forecastChart"></canvas></div></div>
-        </div>
+        <div class="note" id="budNote"></div>
       </div>
 
-      <!-- ══════════════ TAB 4: ORG ══════════════ -->
-      <div class="tab-panel" id="panel-org">
-        <div class="kpi-grid">
-          <div class="kpi">
-            <div class="kpi-label">Total Headcount</div>
-            <div class="kpi-val" id="orgCount">12</div>
-            <div class="kpi-sub">Incl. CCSI team</div>
+      <!-- TAB 6 SCENARIO -->
+      <div class="panel" id="panel-scenario">
+        <div class="kpi-grid" id="scnKpis"></div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header"><div><div class="card-title">Levers · stick to plan</div><div class="card-sub">Toggle actions to close the gap to AOP</div></div></div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:10px;" id="scnLevers"></div>
           </div>
-          <div class="kpi">
-            <div class="kpi-label">Team Lead</div>
-            <div class="kpi-val txt">Ben Fremont</div>
-            <div class="kpi-sub">VP, FP&amp;A</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">Open Requisitions</div>
-            <div class="kpi-val" id="orgOpenReqs">0</div>
-            <div class="kpi-sub">None open</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-label">Incoming</div>
-            <div class="kpi-val">1</div>
-            <div class="kpi-sub">H. Estes · May 31, 2026</div>
+          <div class="card">
+            <div class="card-header"><div><div class="card-title">AI FP&amp;A flags</div><div class="card-sub">Anomalies and likely double-counting the agent surfaced</div></div><span class="badge bwarn" id="flagCount"></span></div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:10px;" id="scnFlags"></div>
           </div>
         </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <div class="card-title">Org Structure</div>
-              <div class="card-sub">Financial Planning &amp; Analysis · Reporting to Ben Fremont</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span class="badge bmuted" id="reqBadge">No open requisitions</span>
-              <button class="btn-gen" id="addReqBtn" style="padding:6px 14px;">+ Add requisition</button>
-            </div>
-          </div>
-          <div class="card-body">
-            <div class="org-wrap"><div class="org-tree" id="orgTree"></div></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ══════════════ TAB 5: WORKFORCE ══════════════ -->
-      <div class="tab-panel" id="panel-workforce">
-        <div class="wf-controls">
-          <div class="wf-ctrl-group">
-            <span class="wf-ctrl-lbl">Show</span>
-            <div class="wf-chips" id="wfTypeChips">
-              <button class="wf-chip active" data-type="all">Both</button>
-              <button class="wf-chip" data-type="hire">Hires</button>
-              <button class="wf-chip" data-type="term">Exits</button>
-            </div>
-          </div>
-          <div class="wf-ctrl-group">
-            <span class="wf-ctrl-lbl">Labor</span>
-            <div class="wf-chips" id="wfLaborChips">
-              <button class="wf-chip active" data-labor="all">All</button>
-              <button class="wf-chip" data-labor="indirect">Indirect</button>
-              <button class="wf-chip" data-labor="direct">Direct</button>
-            </div>
-          </div>
-          <div class="wf-ctrl-group" style="margin-left:auto;">
-            <span class="badge bmuted">Sample data · preview</span>
-          </div>
-        </div>
-
-        <div class="kpi-grid" id="wfKpis"></div>
-
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <div class="card-title">Hires &amp; Exits · 2026</div>
-              <div class="card-sub" id="wfTlSub">Hover any dot for the person</div>
-            </div>
-            <div class="legend">
-              <span class="lg"><span class="lg-dot" style="background:var(--hire)"></span>New hire</span>
-              <span class="lg"><span class="lg-dot" style="background:var(--term)"></span>Exit</span>
-              <span class="lg"><span class="lg-ring"></span>Direct labor (ring)</span>
-            </div>
-          </div>
-          <div class="card-body" style="padding:8px 10px 4px;">
-            <svg class="wf-tl-svg" id="wfTlSvg"></svg>
-          </div>
-          <div class="wf-census-cap">Headcount (census)</div>
-          <div style="padding:2px 10px 14px;">
-            <svg class="wf-census-svg" id="wfCensusSvg"></svg>
-          </div>
-        </div>
-
-        <div class="wf-note" id="wfNote"></div>
+        <div class="note">In production the agent runs server-side across the consolidated payroll, vendor and T&amp;E data and flags duplicative or double-dipped spend. Findings here are illustrative.</div>
       </div>
 
     </div>
   </div>
 </div>
 
-<script src="dashboard.js"></script>
+<script>
+const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const ACT = 5; // actuals through May
+const fmt = n => (n<0?'-$':'$') + Math.abs(Math.round(n)).toLocaleString();
+const fmtK = n => Math.abs(n)>=1000 ? '$'+(n/1000).toFixed(0)+'K' : '$'+Math.round(n);
+const fmtM = n => '$'+(n/1e6).toFixed(2)+'M';
+
+// ============ TAB 1: P&L by subcategory (real subcategories, sample $) ============
+// [name, section, mtdActual, mtdBudget].  Sections: REVENUE, COR, OPEX, ADDBACK, BELOW.
+// Subcategories and their section come straight from the GL map.
+const PL = [
+  ['Sales','REVENUE',1300000,1280000],
+  ['Direct Labor','COR',720000,700000],
+  ['Subcontractor expenses','COR',150000,140000],
+  ['Supplies','COR',70000,66000],
+  ['Temporary labor','COR',55000,45000],
+  ['Other COR','COR',18000,18000],
+  ['Other Insurance','COR',30000,28000],
+  ['Indirect Labor','OPEX',95000,92000],
+  ['Commissions','OPEX',21000,20000],
+  ['Advertising and Marketing','OPEX',6000,7000],
+  ['Professional services','OPEX',11000,9000],
+  ['IT and Software','OPEX',16000,15000],
+  ['Facilities','OPEX',22000,22000],
+  ['Utilities','OPEX',9000,9500],
+  ['Office supplies','OPEX',3000,3200],
+  ['T&E','OPEX',13000,14000],
+  ['General and other','OPEX',8000,6000],
+  ['Bad Debt','OPEX',4000,2000],
+  ['Management Addback','ADDBACK',15000,15000],
+  ['D&A','BELOW',17000,17000],
+  ['Interest','BELOW',6000,6000],
+  ['Other (income) / expense','BELOW',-1000,0],
+  ['Income Tax','BELOW',3000,3000],
+];
+const PL_MONTHLY = [1230000,1218000,1252000,1261000,1251000]; // total operating cost (COR+OpEx) Jan-May
+let plView = 'mtd';
+
+function plVal(line){ const m = plView==='mtd'?1:5; return {name:line[0],sec:line[1],a:line[2]*m,b:line[3]*m}; }
+
+function renderPnl(){
+  const rows = PL.map(plVal);
+  const sumA = s => rows.filter(r=>r.sec===s).reduce((t,r)=>t+r.a,0);
+  const sumB = s => rows.filter(r=>r.sec===s).reduce((t,r)=>t+r.b,0);
+  const rev=sumA('REVENUE'), revB=sumB('REVENUE');
+  const cor=sumA('COR'), corB=sumB('COR');
+  const opex=sumA('OPEX'), opexB=sumB('OPEX');
+  const add=sumA('ADDBACK'), addB=sumB('ADDBACK');
+  const below=sumA('BELOW'), belowB=sumB('BELOW');
+  const gp=rev-cor, gpB=revB-corB;
+  const ebitda=gp-opex, ebitdaB=gpB-opexB;
+  const adj=ebitda+add, adjB=ebitdaB+addB;
+  const net=ebitda-below, netB=ebitdaB-belowB;
+  const pm=(n,d)=> d? (n/d*100).toFixed(1)+'%' : '–';
+
+  document.getElementById('pnlKpis').innerHTML = [
+    {l:'Revenue',v:fmt(rev),s:plView==='mtd'?'May 2026':'YTD Jan–May'},
+    {l:'Gross Profit',v:fmt(gp),s:pm(gp,rev)+' margin'},
+    {l:'EBITDA',v:fmt(ebitda),s:pm(ebitda,rev)+' margin'},
+    {l:'Adjusted EBITDA',v:fmt(adj),s:pm(adj,rev)+' margin'},
+  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
+
+  const per = plView==='mtd'?'May 2026':'YTD';
+  const lineRow = r => {
+    const v=r.a-r.b;
+    const fav = r.sec==='REVENUE' ? v>=0 : v<=0;    // revenue up = good; cost down = good
+    const vc = Math.abs(v)<1?'vzero':(fav?'vneg':'vpos');
+    const op = r.b ? (v/Math.abs(r.b))*100 : 0;
+    const st = Math.abs(op)<2?'<span class="badge bmuted">On Plan</span>':(fav?'<span class="badge bok">Fav</span>':'<span class="badge brisk">Unfav</span>');
+    return `<tr><td>${r.name}</td><td class="r strong">${fmt(r.a)}</td><td class="r dim">${fmt(r.b)}</td><td class="r ${vc}">${v>=0?'+':''}${fmt(v)}</td><td>${st}</td></tr>`;
+  };
+  const subRow = (label,a,b) => {
+    const v=a-b, vc = Math.abs(v)<1?'vzero':(v>=0?'vneg':'vpos');
+    return `<tr class="sub"><td class="strong">${label}</td><td class="r">${fmt(a)}</td><td class="r">${fmt(b)}</td><td class="r ${vc}">${v>=0?'+':''}${fmt(v)}</td><td></td></tr>`;
+  };
+  const sec = s => rows.filter(r=>r.sec===s).map(lineRow).join('');
+
+  let h = `<thead><tr><th>Line</th><th class="r">${per} Actual</th><th class="r">Budget</th><th class="r">Variance</th><th>Status</th></tr></thead><tbody>`;
+  h += `<tr class="grp"><td colspan="5">Revenue</td></tr>` + sec('REVENUE');
+  h += `<tr class="grp"><td colspan="5">Cost of Revenue</td></tr>` + sec('COR') + subRow('Gross Profit',gp,gpB);
+  h += `<tr class="grp"><td colspan="5">Operating Expenses</td></tr>` + sec('OPEX') + subRow('EBITDA',ebitda,ebitdaB);
+  h += `<tr class="grp"><td colspan="5">Adjusted EBITDA add-backs</td></tr>` + sec('ADDBACK') + subRow('Adjusted EBITDA (memo)',adj,adjB);
+  h += `<tr class="grp"><td colspan="5">Below the Line</td></tr>` + sec('BELOW');
+  const nv=net-netB, nvc=nv>=0?'vneg':'vpos';
+  h += `</tbody><tfoot><tr><td>Net Income</td><td class="r">${fmt(net)}</td><td class="r">${fmt(netB)}</td><td class="r ${nvc}">${nv>=0?'+':''}${fmt(nv)}</td><td></td></tr></tfoot>`;
+  document.getElementById('pnlTable').innerHTML = h;
+}
+let pnlBar, pnlDonut;
+function renderPnlCharts(){
+  if(pnlBar) pnlBar.destroy();
+  pnlBar = new Chart(document.getElementById('pnlBar'),{type:'bar',
+    data:{labels:months.slice(0,ACT),datasets:[{data:PL_MONTHLY,backgroundColor:'#1A56A0',borderRadius:4,barThickness:34}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(c.parsed.y)}}},scales:{y:{ticks:{callback:v=>fmtK(v)},grid:{color:'#F1F5F9'}},x:{grid:{display:false}}}}});
+  // cost mix donut: COR + OpEx subcategories (YTD)
+  const yt = PL.filter(l=>l[1]==='COR'||l[1]==='OPEX').map(l=>({name:l[0],v:l[2]*5})).filter(x=>x.v>0).sort((a,b)=>b.v-a.v);
+  const top = yt.slice(0,7); const other = yt.slice(7).reduce((s,x)=>s+x.v,0);
+  const labels = top.map(x=>x.name).concat(other>0?['Other']:[]); const data = top.map(x=>x.v).concat(other>0?[other]:[]);
+  const colors = ['#1A56A0','#2E6FCC','#1A7A4A','#6B21A8','#B91C1C','#B45309','#0E7490','#94A3B8'];
+  if(pnlDonut) pnlDonut.destroy();
+  pnlDonut = new Chart(document.getElementById('pnlDonut'),{type:'doughnut',
+    data:{labels,datasets:[{data,backgroundColor:colors,borderColor:'#fff',borderWidth:2}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'60%',plugins:{legend:{position:'bottom',labels:{boxWidth:9,padding:8,font:{size:9}}},tooltip:{callbacks:{label:c=>`${c.label}: ${fmt(c.parsed)}`}}}}});
+}
+
+// ============ TAB 2: PAYROLL (sample) ============
+const SAL = [ // id,name,title,hire,term,baseAnnual,bonusPct
+  ['E-1001','Marcus Webb','Area Operations Manager','2022-02-09','',142000,12],
+  ['E-1003','Luis Romero','Account Manager','2026-03-23','',118000,10],
+  ['E-1004','Priya Nair','Operations Analyst','2026-05-04','',92000,8],
+  ['E-1006','Bianca Lopez','Account Manager','2020-06-15','2026-07-08',121000,10],
+  ['E-1002','Renee Adler','Regional Manager','2026-08-03','',165000,15],
+];
+const HRLY = [ // id,name,title,hire,term,rate,hrsWk
+  ['H-2001','Tasha Greene','Site Supervisor','2026-03-02','',28.50,40],
+  ['H-2003','Sam Okafor','Site Supervisor','2024-05-10','2026-04-24',26.00,40],
+  ['H-2002','Devon Clarke','Site Supervisor','2026-06-15','',27.00,40],
+  ['H-2004','Kelly Pace','Site Supervisor','2026-10-19','',27.50,40],
+];
+let payClass='salaried', merit=3.0;
+const fmtD = d => d ? new Date(d+'T00:00:00').toLocaleDateString([], {month:'short',day:'numeric',year:'2-digit'}) : '—';
+function renderPay(){
+  // KPIs
+  const activeSal = SAL.filter(e=>!e[4]).length, activeHr = HRLY.filter(e=>!e[4]).length;
+  const planned = [...SAL,...HRLY].filter(e=>new Date(e[3]+'T00:00:00')>new Date('2026-05-31')).length;
+  const termd = [...SAL,...HRLY].filter(e=>e[4]).length;
+  document.getElementById('payKpis').innerHTML=[
+    {l:'Active Headcount',v:activeSal+activeHr,s:`${activeSal} salaried · ${activeHr} hourly`},
+    {l:'Planned Hires',v:planned,s:'Start date after May'},
+    {l:'Exits YTD/planned',v:termd,s:'Termed or future term'},
+    {l:'Merit Assumption',v:merit.toFixed(1)+'%',s:'Applied to forecast comp'},
+  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
+  // table
+  document.getElementById('payTblTitle').textContent = 'Employee Details · '+(payClass==='salaried'?'Salaried':'Hourly');
+  let h, b='';
+  if(payClass==='salaried'){
+    h=`<thead><tr><th>ID</th><th>Name</th><th>Title</th><th>Hire</th><th>Planned term</th><th class="r">Base</th><th class="r">Bonus %</th><th class="r">All-in</th><th>Status</th></tr></thead>`;
+    SAL.forEach((e,i)=>{
+      const allIn = e[5]*(1+e[6]/100);
+      const st = e[4]?'<span class="badge brisk">Exit</span>':(new Date(e[3]+'T00:00:00')>new Date('2026-05-31')?'<span class="badge bwarn">Planned</span>':'<span class="badge bok">Active</span>');
+      b+=`<tr><td class="dim">${e[0]}</td><td class="strong">${e[1]}</td><td>${e[2]}</td><td class="dim">${fmtD(e[3])}</td>
+      <td><input class="cellinput" style="width:120px;text-align:left" type="date" value="${e[4]}" onchange="setTerm('sal',${i},this.value)"></td>
+      <td class="r">${fmt(e[5])}</td><td class="r dim">${e[6]}%</td><td class="r strong">${fmt(allIn)}</td><td>${st}</td></tr>`;
+    });
+  } else {
+    h=`<thead><tr><th>ID</th><th>Name</th><th>Title</th><th>Hire</th><th>Planned term</th><th class="r">Rate</th><th class="r">Hrs/wk</th><th class="r">Annualized</th><th>Status</th></tr></thead>`;
+    HRLY.forEach((e,i)=>{
+      const ann = e[5]*e[6]*52;
+      const st = e[4]?'<span class="badge brisk">Exit</span>':(new Date(e[3]+'T00:00:00')>new Date('2026-05-31')?'<span class="badge bwarn">Planned</span>':'<span class="badge bok">Active</span>');
+      b+=`<tr><td class="dim">${e[0]}</td><td class="strong">${e[1]}</td><td>${e[2]}</td><td class="dim">${fmtD(e[3])}</td>
+      <td><input class="cellinput" style="width:120px;text-align:left" type="date" value="${e[4]}" onchange="setTerm('hr',${i},this.value)"></td>
+      <td class="r">$${e[5].toFixed(2)}</td><td class="r dim">${e[6]}</td><td class="r strong">${fmt(ann)}</td><td>${st}</td></tr>`;
+    });
+  }
+  document.getElementById('payTable').innerHTML = h+'<tbody>'+b+'</tbody>';
+  renderHc(); renderComp();
+  document.getElementById('payNote').innerHTML = `<b>How the forecast moves:</b> editing a planned term date drops that person from the forecast months after it, and the merit assumption lifts forecast salaries for the back half of the year. The compensation summary recomputes and is what posts to Direct, Indirect and Temporary Labor on the P&amp;L. Live version reads the roster from Workday and lets each leader edit only their own team.`;
+}
+function setTerm(t,i,val){ (t==='sal'?SAL:HRLY)[i][4]=val; renderPay(); }
+function renderHc(){
+  // sample roll-forward (monthly): beg, hires, tbhNew, tbhBackfill, attrition, end
+  const beg=[24,25,25,28,27,27,28,28,29,29,30,30];
+  const hires=[1,0,2,0,1,1,0,1,0,1,0,0];
+  const tbh=[0,0,0,0,0,0,1,0,1,0,1,0];
+  const attr=[0,0,1,1,0,0,1,0,0,0,1,0];
+  let end=[]; for(let i=0;i<12;i++){ end[i]= (i===0?beg[0]:end[i-1]) + hires[i]+tbh[i]-attr[i]; }
+  const rows=[['Beg headcount',beg],['(+) New hires',hires],['(+) TBHs / backfill',tbh],['(−) Attrition',attr.map(x=>-x)],['End headcount',end]];
+  let h=`<thead><tr><th>Movement</th>${months.map((m,i)=>`<th class="r" style="${i>=ACT?'color:var(--accent)':''}">${m}</th>`).join('')}</tr></thead><tbody>`;
+  rows.forEach(r=>{
+    const strong = (r[0]==='Beg headcount'||r[0]==='End headcount');
+    h+=`<tr${strong?' class="sub"':''}><td${strong?' class="strong"':''}>${r[0]}</td>${r[1].map(v=>`<td class="r ${v<0?'vneg':''}">${v===0?'<span class="dim">–</span>':(v>0&&!strong?'+':'')+v}</td>`).join('')}</tr>`;
+  });
+  h+='</tbody>';
+  document.getElementById('hcTable').innerHTML=h;
+}
+function renderComp(){
+  const m = 1+merit/100;
+  // annualized comp from active salaried + hourly, merit applied to forecast portion (approx: full year * blended)
+  const sal = SAL.filter(e=>!e[4]).reduce((s,e)=>s+e[5],0) + HRLY.filter(e=>!e[4]).reduce((s,e)=>s+e[5]*e[6]*52,0);
+  const salF = sal * (ACT/12 + (1-ACT/12)*m); // merit only on forecast months
+  const commission = 252000;
+  const bonus = SAL.filter(e=>!e[4]).reduce((s,e)=>s+e[5]*e[6]/100,0);
+  const directComp = salF+commission+bonus;
+  const benefits = salF*0.14, retire = salF*0.04, taxes = salF*0.0765;
+  const loaded = directComp+benefits+retire+taxes;
+  const rows=[['Salaries',salF],['Commission',commission],['Bonus',bonus],['Total Direct Comp',directComp,1],
+    ['Benefits',benefits],['401(k) / Pension',retire],['Taxes',taxes],['Total Loaded Comp',loaded,1]];
+  document.getElementById('compTable').innerHTML='<tbody>'+rows.map(r=>`<tr${r[2]?' class="sub"':''}><td${r[2]?' class="strong"':''}>${r[0]}</td><td class="r ${r[2]?'strong':''}">${fmt(r[1])}</td></tr>`).join('')+'</tbody>';
+  document.getElementById('compSub').innerHTML = `FY2026 annualized · merit ${merit.toFixed(1)}% on forecast months · posts to P&amp;L labor lines`;
+}
+let venBar, teBar, budBar;
+
+// ============ TAB 3: VENDORS (sample) ============
+const VEN=[ // name, category, mtd, ytd
+  ['Aramark','Subcontractor expenses',48000,242000],['ADP','Professional services',9500,47500],
+  ['Cintas','Supplies',7200,36800],['Grainger','Equipment & Repairs',11000,52000],
+  ['Microsoft','IT and Software',8800,44000],['Iron Mountain','Facilities',3100,15600],
+  ['SAP Concur','IT and Software',1900,9500],['Aon','Other Insurance',8000,40000],
+];
+function renderVen(){
+  const mtd=VEN.reduce((s,v)=>s+v[2],0), ytd=VEN.reduce((s,v)=>s+v[3],0);
+  document.getElementById('venKpis').innerHTML=[
+    {l:'Vendors',v:VEN.length,s:'With activity YTD'},{l:'May Spend',v:fmt(mtd),s:'Current month'},
+    {l:'YTD Spend',v:fmt(ytd),s:'Jan–May'},{l:'Annualized Run-rate',v:fmt(ytd/ACT*12),s:'YTD pace x12'},
+  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
+  const sorted=[...VEN].sort((a,b)=>b[3]-a[3]);
+  let h=`<thead><tr><th>Vendor</th><th>Category</th><th class="r">May</th><th class="r">YTD</th><th class="r">Run-rate</th></tr></thead><tbody>`;
+  sorted.forEach(v=>{h+=`<tr><td class="strong">${v[0]}</td><td class="dim">${v[1]}</td><td class="r">${fmt(v[2])}</td><td class="r strong">${fmt(v[3])}</td><td class="r dim">${fmt(v[3]/ACT*12)}</td></tr>`;});
+  h+=`</tbody><tfoot><tr><td>Total</td><td></td><td class="r">${fmt(mtd)}</td><td class="r">${fmt(ytd)}</td><td class="r">${fmt(ytd/ACT*12)}</td></tr></tfoot>`;
+  document.getElementById('venTable').innerHTML=h;
+}
+function renderVenChart(){
+  const sorted=[...VEN].sort((a,b)=>b[3]-a[3]);
+  if(venBar) venBar.destroy();
+  venBar=new Chart(document.getElementById('venBar'),{type:'bar',
+    data:{labels:sorted.map(v=>v[0]),datasets:[{data:sorted.map(v=>v[3]),backgroundColor:'#1A56A0',borderRadius:4,barThickness:18}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>fmt(c.parsed.x)}}},scales:{x:{ticks:{callback:v=>fmtK(v)},grid:{color:'#F1F5F9'}},y:{grid:{display:false}}}}});
+}
+
+// ============ TAB 4: T&E (sample) ============
+const TE_BUD=[14000,14000,15000,15000,15000,15000,16000,14000,14000,16000,15000,18000];
+const TE_ACT=[12100,13400,15800,14200,13900,0,0,0,0,0,0,0];
+const TE_COMMIT=[0,0,0,0,0,8000,3500,1200,0,0,0,0]; // pre-booked in Concur for future months
+const TE_GL=[ ['60300','Travel - Per Diem',9200],['60301','Travel',31400],['60302','Mileage Reimbursement',7600],
+  ['60303','Meals / Ent',5100],['60304','Parking Expense',1900],['60305','T&E - miscellaneous',1200],
+  ['60307','Leased Vehicles',8400],['69000','SG&A Expense - Other',3600] ];
+const TE_REG=[ ['West RVP · M. Reyes',42000,38500],['Central RVP · D. Okafor',36000,40100],['East RVP · S. Lang',30000,28900] ];
+function renderTe(){
+  const ytdA=TE_ACT.reduce((s,v)=>s+v,0), ytdB=TE_BUD.slice(0,ACT).reduce((s,v)=>s+v,0);
+  const juneBud=TE_BUD[5], juneCommit=TE_COMMIT[5];
+  document.getElementById('teKpis').innerHTML=[
+    {l:'YTD T&E Actual',v:fmt(ytdA),s:'Jan–May'},
+    {l:'YTD vs Budget',v:(ytdA-ytdB>=0?'+':'')+fmt(ytdA-ytdB),d:`<span class="${ytdA-ytdB>0?'dn':'up'}">${ytdA-ytdB>0?'Over':'Under'} plan</span>`,s:''},
+    {l:'June Pre-booked',v:fmt(juneCommit),s:`of ${fmt(juneBud)} budget`},
+    {l:'June Remaining',v:fmt(juneBud-juneCommit),s:'Budget less committed'},
+  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div>${k.d?`<div class="kpi-delta">${k.d}</div>`:''}<div class="kpi-sub">${k.s}</div></div>`).join('');
+  // GL
+  const glTot=TE_GL.reduce((s,r)=>s+r[2],0);
+  document.getElementById('teGl').innerHTML=`<thead><tr><th>GL</th><th>Account</th><th class="r">YTD</th></tr></thead><tbody>`+
+    TE_GL.map(r=>`<tr><td class="dim">${r[0]}</td><td>${r[1]}</td><td class="r strong">${fmt(r[2])}</td></tr>`).join('')+
+    `</tbody><tfoot><tr><td></td><td>Total</td><td class="r">${fmt(glTot)}</td></tr></tfoot>`;
+  // Region
+  const rA=TE_REG.reduce((s,r)=>s+r[2],0), rB=TE_REG.reduce((s,r)=>s+r[1],0);
+  document.getElementById('teRegion').innerHTML=`<thead><tr><th>Region</th><th class="r">YTD Budget</th><th class="r">YTD Actual</th><th class="r">Var</th></tr></thead><tbody>`+
+    TE_REG.map(r=>{const v=r[2]-r[1];return `<tr><td>${r[0]}</td><td class="r dim">${fmt(r[1])}</td><td class="r strong">${fmt(r[2])}</td><td class="r ${v>0?'vpos':'vneg'}">${v>=0?'+':''}${fmt(v)}</td></tr>`;}).join('')+
+    `</tbody><tfoot><tr><td>EVP Total</td><td class="r">${fmt(rB)}</td><td class="r">${fmt(rA)}</td><td class="r">${rA-rB>=0?'+':''}${fmt(rA-rB)}</td></tr></tfoot>`;
+}
+function renderTeChart(){
+  if(teBar) teBar.destroy();
+  teBar=new Chart(document.getElementById('teBar'),{type:'bar',
+    data:{labels:months,datasets:[
+      {label:'Actual',data:TE_ACT.map(v=>v||null),backgroundColor:'#1A56A0',stack:'s',borderRadius:3},
+      {label:'Committed (pre-booked)',data:TE_COMMIT.map(v=>v||null),backgroundColor:'#7C3AED',stack:'s',borderRadius:3},
+      {label:'Budget',type:'line',data:TE_BUD,borderColor:'#B91C1C',borderWidth:2,pointRadius:3,pointBackgroundColor:'#B91C1C',fill:false,tension:.2,stepped:true}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12,font:{size:11}}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt(c.parsed.y||0)}`}}},scales:{y:{stacked:true,ticks:{callback:v=>fmtK(v)},grid:{color:'#F1F5F9'}},x:{stacked:true,grid:{display:false}}}}});
+}
+
+// ============ TAB 5: BUDGET versions (sample) ============
+const AOP_MON=[780,780,790,800,800,810,815,810,805,815,820,860].map(x=>x*1000);
+const ACT_MON=[772,768,791,805,784].map(x=>x*1000); // actuals
+const VERS={
+  'AOP':{act:0,note:'Original annual operating plan presented to the Board.'},
+  '4+8':{act:4,note:'4 actuals + 8 forecast. First reforecast after Q1 close.'},
+  '6+6':{act:6,note:'6 actuals + 6 forecast. Mid-year reforecast (the standard June reset).'},
+  '8+4':{act:8,note:'8 actuals + 4 forecast. Reforecast after August close.'},
+};
+let budVer='AOP';
+function budSeries(v){
+  const a=VERS[v].act;
+  return AOP_MON.map((plan,i)=>{
+    if(v==='AOP') return plan;
+    if(i<a) return ACT_MON[i]!=null?ACT_MON[i]:plan; // actual where we have it
+    return Math.round(plan*1.012); // forecast drifts slightly over plan
+  });
+}
+function renderBud(){
+  const aop=AOP_MON.reduce((s,v)=>s+v,0);
+  const cur=budSeries(budVer).reduce((s,v)=>s+v,0);
+  const v=cur-aop;
+  document.getElementById('budKpis').innerHTML=[
+    {l:'AOP Full-Year',v:fmtM(aop),s:'Board plan'},
+    {l:budVer+' Full-Year',v:fmtM(cur),s:VERS[budVer].act?`${VERS[budVer].act} actual + ${12-VERS[budVer].act} fcst`:'Plan'},
+    {l:'Variance to AOP',v:(v>=0?'+':'')+fmtM(v),d:`<span class="${v>0?'dn':'up'}">${v>0?'Over':'Under'} plan</span>`,s:''},
+    {l:'% to AOP',v:((cur/aop-1)*100).toFixed(1)+'%',s:'Full-year'},
+  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div>${k.d?`<div class="kpi-delta">${k.d}</div>`:''}<div class="kpi-sub">${k.s}</div></div>`).join('');
+  document.getElementById('budChartTitle').textContent='AOP vs '+budVer;
+  document.getElementById('budNote').innerHTML=`<b>${budVer}:</b> ${VERS[budVer].note} Live version stores each locked version so leaders can compare any reforecast against the AOP and against each other.`;
+}
+function renderBudChart(){
+  if(budBar) budBar.destroy();
+  const cur=budSeries(budVer); const a=VERS[budVer].act;
+  budBar=new Chart(document.getElementById('budBar'),{type:'bar',
+    data:{labels:months,datasets:[
+      {label:'AOP',type:'line',data:AOP_MON,borderColor:'#94A3B8',borderWidth:2,borderDash:[5,4],pointRadius:0,fill:false,tension:.2},
+      {label:budVer+' Actual',data:cur.map((v,i)=>i<a?v:null),backgroundColor:'#1A56A0',borderRadius:3},
+      {label:budVer+' Forecast',data:cur.map((v,i)=>i>=a?v:null),backgroundColor:'#A8C0E8',borderRadius:3},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:12,font:{size:11}}},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmt(c.parsed.y||0)}`}}},scales:{y:{ticks:{callback:v=>fmtK(v)},grid:{color:'#F1F5F9'}},x:{grid:{display:false}}}}});
+}
+
+// ============ TAB 6: SCENARIO (sample) ============
+const LEVERS=[
+  {id:'l1',t:'Defer Regional Manager hire (Renee Adler, Aug)',d:'Holds an open req · removes ~5 months loaded comp',save:82000,on:false},
+  {id:'l2',t:'Trim discretionary vendor spend 10%',d:'Applies to non-essential vendor categories',save:64000,on:false},
+  {id:'l3',t:'Hold T&E to budget for the balance of year',d:'Removes the projected overage Jun–Dec',save:31000,on:false},
+  {id:'l4',t:'Convert 2 temp roles to attrition backfill',d:'Lowers temporary labor run-rate',save:96000,on:false},
+];
+const FLAGS=[
+  {sev:'high',t:'Likely vehicle double-dip · M. Webb',d:'Receives a $600/mo cell + vehicle allowance and also appears on Leased Vehicles (60307) with daily mileage reimbursement. Est. $9.6K/yr overlap.'},
+  {sev:'med',t:'Duplicate MRO vendors',d:'Grainger and a second supplier both billing equipment & repairs. Consolidating could capture volume pricing.'},
+  {sev:'med',t:'Professional services spike',d:'May Professional services 22% over plan on a single invoice. Confirm it is not a duplicate of an ADP charge.'},
+];
+const AOP_FY=AOP_MON.reduce((s,v)=>s+v,0);
+const PROJECTED=Math.round(AOP_FY*1.018); // current projection over plan
+function renderScn(){
+  const saved=LEVERS.filter(l=>l.on).reduce((s,l)=>s+l.save,0);
+  const proj=PROJECTED-saved; const gap=proj-AOP_FY;
+  document.getElementById('scnKpis').innerHTML=[
+    {l:'AOP Plan',v:fmtM(AOP_FY),s:'Target'},
+    {l:'Current Projection',v:fmtM(PROJECTED),d:`<span class="dn">▲ ${fmtM(PROJECTED-AOP_FY)} over</span>`,s:'Before levers'},
+    {l:'With Levers',v:fmtM(proj),d:`<span class="${gap>0?'dn':'up'}">${gap>0?'▲ '+fmtM(gap)+' over':'▼ on/under plan'}</span>`,s:`${fmtK(saved)} saved`},
+    {l:'Gap to Plan',v:(gap<=0?'On plan':fmtM(gap)),d:gap<=0?'<span class="up">Closed</span>':'<span class="dn">Remaining</span>',s:''},
+  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div>${k.d?`<div class="kpi-delta">${k.d}</div>`:''}<div class="kpi-sub">${k.s}</div></div>`).join('');
+  document.getElementById('scnLevers').innerHTML=LEVERS.map(l=>`<label class="lever"><input type="checkbox" ${l.on?'checked':''} onchange="toggleLever('${l.id}')"><div class="lever-main"><div class="lever-t">${l.t}</div><div class="lever-d">${l.d}</div></div><div class="lever-save">${fmtK(l.save)}</div></label>`).join('');
+  document.getElementById('scnFlags').innerHTML=FLAGS.map(f=>`<div class="flag ${f.sev==='high'?'high':''}"><div class="flag-ico">!</div><div><div class="flag-t">${f.t}</div><div class="flag-d">${f.d}</div></div></div>`).join('');
+  document.getElementById('flagCount').textContent=FLAGS.length+' flags';
+}
+function toggleLever(id){ const l=LEVERS.find(x=>x.id===id); l.on=!l.on; renderScn(); }
+
+// ============ NAV / LIFECYCLE ============
+const TITLES={pnl:['Department P&L','Consolidated by subcategory'],payroll:['Payroll','Roster, headcount and compensation'],
+  vendors:['Vendors','External vendor spend'],te:['Travel & Entertainment','Budget vs actual and committed'],
+  budget:['Budget','AOP and reforecast versions'],scenario:['Scenario','Plan to land on AOP']};
+const drawn={};
+function showTab(name,el){
+  document.querySelectorAll('.tab,.nav-item[data-tab]').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll(`.tab[data-tab="${name}"],.nav-item[data-tab="${name}"]`).forEach(e=>e.classList.add('active'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  document.getElementById('pageTitle').innerHTML=TITLES[name][0];
+  document.getElementById('pageSub').textContent='Field Operations · '+TITLES[name][1];
+  // charts must draw while visible
+  if(name==='pnl') renderPnlCharts();
+  if(name==='vendors') renderVenChart();
+  if(name==='te') renderTeChart();
+  if(name==='budget') renderBudChart();
+}
+
+// segmented toggles
+document.querySelectorAll('#pnlSeg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#pnlSeg button').forEach(x=>x.classList.remove('active'));b.classList.add('active');plView=b.dataset.v;renderPnl();});
+document.querySelectorAll('#paySeg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#paySeg button').forEach(x=>x.classList.remove('active'));b.classList.add('active');payClass=b.dataset.c;renderPay();});
+document.querySelectorAll('#budSeg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#budSeg button').forEach(x=>x.classList.remove('active'));b.classList.add('active');budVer=b.dataset.v;renderBud();renderBudChart();});
+
+// initial render (non-chart content can render hidden)
+renderPnl(); renderPay(); renderVen(); renderTe(); renderBud(); renderScn();
+renderPnlCharts();
+window.addEventListener('resize',()=>{ const a=document.querySelector('.panel.active').id.replace('panel-','');
+  if(a==='pnl')renderPnlCharts(); if(a==='vendors')renderVenChart(); if(a==='te')renderTeChart(); if(a==='budget')renderBudChart(); });
+</script>
 </body>
 </html>
