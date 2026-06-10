@@ -78,6 +78,9 @@ let haydenMonthlyBenefit = Math.round(haydenMonthlySalary * benefitsRatio);
 let haydenLines = [];
 
 function buildHaydenLines(){
+  // The H. Estes lines are a finance (3020) example only; keep them out of
+  // every other department's forecast.
+  if (forecastDept() !== '3020'){ haydenLines = []; return; }
   haydenMonthlyBenefit = Math.round(haydenMonthlySalary * benefitsRatio);
   haydenLines = [
     { id:'hayden_salary',   label:'Salary — H. Estes',            cat:'payroll',  hayden:true, monthly: haydenMonthlySalary },
@@ -721,16 +724,63 @@ function renderForecastTable(){
 function forecastLineYTD(id){ return (forecastState[id]||[]).slice(0,ACTUAL_MONTHS).reduce((a,b)=>a+b,0); }
 function forecastLineFwd(id){ return (forecastState[id]||[]).slice(ACTUAL_MONTHS).reduce((a,b)=>a+b,0); }
 
+// Interim 2026 plan = annualized run-rate of the existing actual lines only,
+// excluding unbudgeted adds (new hires, open reqs, custom lines). Swap this for
+// the approved plan per department once budget data is loaded to the DB.
+function getPlanTotal(){
+  return lineItems.reduce((s,l)=>{
+    const ytdActual = l.actuals.reduce((a,b)=>a+b,0);
+    const fwd = avg(l.actuals) * (12 - ACTUAL_MONTHS);
+    return s + ytdActual + fwd;
+  }, 0);
+}
+
 function renderForecastKPIs(){
   const allIds = getForecastRows().filter(r=>typeof r==='string');
   const total = allIds.reduce((s,id)=> s + (forecastState[id]||[]).reduce((a,b)=>a+b,0), 0);
   const ytdActual = allIds.reduce((s,id)=> s + forecastLineYTD(id), 0);
   const fwd = allIds.reduce((s,id)=> s + forecastLineFwd(id), 0);
-  const haydenTotal = haydenLines.reduce((s,l)=> s + forecastLineFwd(l.id), 0);
   document.getElementById('fcTotal').textContent = fmt(total);
   document.getElementById('fcYtd').textContent = fmt(ytdActual);
   document.getElementById('fcRemaining').textContent = fmt(fwd);
-  document.getElementById('fcHayden').textContent = fmt(haydenTotal);
+
+  // 2026 Plan box: plan total plus forecast-vs-plan variance.
+  // This is spend, so a forecast above plan is unfavorable (red).
+  const plan = getPlanTotal();
+  const variance = total - plan;                 // positive = over plan
+  const pct = plan ? (variance / Math.abs(plan)) * 100 : 0;
+  const planEl = document.getElementById('fcPlan');
+  if (planEl) planEl.textContent = fmt(plan);
+  const varEl = document.getElementById('fcPlanVar');
+  if (varEl){
+    if (Math.abs(variance) < 1){
+      varEl.textContent = 'On plan';
+      varEl.className = 'kpi-delta up';
+    } else if (variance > 0){
+      varEl.textContent = `▲ ${fmt(variance)} over plan (${pct.toFixed(1)}%)`;
+      varEl.className = 'kpi-delta dn';
+    } else {
+      varEl.textContent = `▼ ${fmt(Math.abs(variance))} under plan (${Math.abs(pct).toFixed(1)}%)`;
+      varEl.className = 'kpi-delta up';
+    }
+  }
+  const subEl = document.getElementById('fcPlanSub');
+  if (subEl) subEl.textContent = 'Interim baseline · run-rate';
+
+  // Back-to-plan banner: what it takes to close an over-plan gap.
+  const banner = document.getElementById('fcBackToPlan');
+  if (banner){
+    if (variance > 1 && fwd > 0){
+      const cutPct = (variance / fwd) * 100;
+      banner.setAttribute('style',
+        'display:flex;align-items:center;gap:8px;padding:10px 14px;'+
+        'background:var(--red-bg);border:1px solid #FECACA;border-radius:8px;'+
+        'font-size:12px;color:var(--red);');
+      banner.innerHTML = `<strong>Back to plan:</strong> reduce Jun-Dec by ${fmt(variance)}, about ${cutPct.toFixed(0)}% of the ${fmt(fwd)} remaining forecast.`;
+    } else {
+      banner.setAttribute('style','display:none;');
+    }
+  }
 }
 
 function renderForecastChart(){
