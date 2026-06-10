@@ -158,6 +158,7 @@ const catMeta = {
   prof:     { label:'Professional Fees',tag:'cat-prof' },
   te:       { label:'Travel & Entertainment', tag:'cat-te' },
   other:    { label:'Other Labor & Supplies', tag:'cat-other' },
+  addback:  { label:'Management Add-back', tag:'cat-other' },
 };
 
 const fmt = (n) => (n<0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString();
@@ -458,12 +459,17 @@ function toast(msg, isErr){
 let pnlView = 'mtd';   // 'mtd' (May) or 'ytd'
 let charts = {};       // keep chart instances so we can destroy before redraw
 function destroyChart(key){ if (charts[key]){ charts[key].destroy(); delete charts[key]; } }
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // Cost section grouping for the P&L. We hold operating-cost actuals only (no
 // revenue feed yet), so the P&L is cost-focused: categories roll into COR/OpEx.
 const COR_CATS  = ['payroll','benefits','service'];          // cost of revenue / direct delivery
 const OPEX_CATS = ['prof','te','other'];                     // operating expenses
-function sectionForCat(cat){ return COR_CATS.includes(cat) ? 'COR' : 'OPEX'; }
+const ADDBACK_CATS = ['addback'];                            // EBITDA add-backs (shown separately)
+function sectionForCat(cat){
+  if (ADDBACK_CATS.includes(cat)) return 'ADDBACK';
+  return COR_CATS.includes(cat) ? 'COR' : 'OPEX';
+}
 
 // Per-line actual for a period: month = May, ytd = Jan-May sum.
 function valFor(l, view){ return view==='mtd' ? l.actuals[CURRENT_MONTH_IDX] : ytd(l.actuals); }
@@ -484,14 +490,18 @@ function renderPnl(){
   const corB = cats.filter(c=>sectionForCat(c)==='COR').reduce((s,c)=>s+byCat[c].budget,0);
   const opexA = cats.filter(c=>sectionForCat(c)==='OPEX').reduce((s,c)=>s+byCat[c].actual,0);
   const opexB = cats.filter(c=>sectionForCat(c)==='OPEX').reduce((s,c)=>s+byCat[c].budget,0);
-  const totA = corA+opexA, totB = corB+opexB;
+  const addA = cats.filter(c=>sectionForCat(c)==='ADDBACK').reduce((s,c)=>s+byCat[c].actual,0);
+  const addB = cats.filter(c=>sectionForCat(c)==='ADDBACK').reduce((s,c)=>s+byCat[c].budget,0);
+  const operA = corA+opexA, operB = corB+opexB;     // operating cost (excludes add-backs)
+  const totA = operA+addA, totB = operB+addB;        // grand total (includes add-backs)
+  const hasAddback = cats.some(c=>sectionForCat(c)==='ADDBACK');
 
   // KPIs: we have costs, not revenue, so frame around operating cost + variance.
   const per = view==='mtd' ? 'May 2026' : 'YTD Jan–May';
   const kpis = [
-    { l:'Total Operating Cost', v:fmt(totA), s:per },
-    { l:'Cost of Delivery', v:fmt(corA), s:`${totA?Math.round(corA/totA*100):0}% of cost` },
-    { l:'Operating Expense', v:fmt(opexA), s:`${totA?Math.round(opexA/totA*100):0}% of cost` },
+    { l:'Total Cost', v:fmt(totA), s:per },
+    { l:'Operating Cost', v:fmt(operA), s:hasAddback?'Excludes add-backs':`${totA?Math.round(operA/totA*100):0}% of cost` },
+    { l: hasAddback ? 'Management Add-back' : 'Operating Expense', v:fmt(hasAddback?addA:opexA), s:hasAddback?'Non-operating':`${totA?Math.round(opexA/totA*100):0}% of cost` },
     { l:'Over / (Under) Budget', v:(totA-totB>=0?'+':'')+fmt(totA-totB),
       s:`vs ${fmt(totB)} baseline`, cls:(totA-totB)>0?'dn':'up' },
   ];
@@ -515,8 +525,13 @@ function renderPnl(){
   let h = `<thead><tr><th>Cost Category</th><th class="r">${view==='mtd'?'May':'YTD'} Actual</th><th class="r">Budget</th><th class="r">Variance</th><th>Status</th></tr></thead><tbody>`;
   h += `<tr class="grp"><td colspan="5">Cost of Delivery</td></tr>` + secLines('COR') + subRow('Total Cost of Delivery',corA,corB);
   h += `<tr class="grp"><td colspan="5">Operating Expenses</td></tr>` + secLines('OPEX') + subRow('Total Operating Expense',opexA,opexB);
+  if (hasAddback){
+    h += subRow('Operating Cost (subtotal)', operA, operB);
+    h += `<tr class="grp"><td colspan="5">Add-backs (non-operating)</td></tr>` + secLines('ADDBACK');
+  }
   const tv = totA-totB, tvc = tv<=0?'vneg':'vpos';
-  h += `</tbody><tfoot><tr><td>Total Operating Cost</td><td class="r">${fmt(totA)}</td><td class="r">${fmt(totB)}</td><td class="r ${tvc}">${tv>=0?'+':''}${fmt(tv)}</td><td></td></tr></tfoot>`;
+  const totLabel = hasAddback ? 'Total Cost (incl. add-backs)' : 'Total Operating Cost';
+  h += `</tbody><tfoot><tr><td>${totLabel}</td><td class="r">${fmt(totA)}</td><td class="r">${fmt(totB)}</td><td class="r ${tvc}">${tv>=0?'+':''}${fmt(tv)}</td><td></td></tr></tfoot>`;
   document.getElementById('pnlTable').innerHTML = h;
 }
 
@@ -692,9 +707,122 @@ function renderScenario(){
     `and surface anomalies the FP&A agent finds (double-counted spend, duplicate vendors). It needs the AOP loaded and the levers modeled. The run-rate above is the starting point.`;
 }
 
-// =============================================================
-// TAB SWITCHING + DEPARTMENT SELECTOR (real backend)
-// =============================================================
+// ---- TAB 7: SETTLEMENTS (Legal) -----------------------------------------
+// A case/accrual tracker, editable by the legal team. Its own table, scoped
+// by department like everything else. Settled cases sort to the bottom.
+let settlements = [];               // loaded rows for the active department
+const STATUS_LABELS = { initial:'Initial', in_progress:'In progress', settled:'Settled' };
+const STATUS_ORDER = { initial:0, in_progress:1, settled:2 };
+
+async function loadSettlements(){
+  settlements = [];
+  // settlements are a single-department concept; load for the codes in view
+  const codes = deptsForSelection(activeDept);
+  try {
+    const { data, error } = await sb.from('settlements').select('*')
+      .in('department', codes).order('created_at',{ascending:true});
+    if (error) throw error;
+    settlements = data || [];
+  } catch(e){ console.warn('settlements load failed', e); settlements = []; }
+}
+
+function sortSettlements(list){
+  // settled to the bottom; within a group, larger balance first (nulls last)
+  return list.slice().sort((a,b)=>{
+    const so = (STATUS_ORDER[a.status]??9) - (STATUS_ORDER[b.status]??9);
+    if (so) return so;
+    const av = a.balance==null ? -1 : a.balance;
+    const bv = b.balance==null ? -1 : b.balance;
+    return bv - av;
+  });
+}
+
+function renderSettlements(){
+  const tbody = document.getElementById('setTableBody');
+  if (!tbody) return;
+  const rows = sortSettlements(settlements);
+
+  // KPIs: accrued balance (estimable + probable), open vs settled counts, untracked
+  const accrued = rows.filter(r=>r.status!=='settled' && r.balance!=null).reduce((s,r)=>s+Number(r.balance),0);
+  const openCount = rows.filter(r=>r.status!=='settled').length;
+  const settledCount = rows.filter(r=>r.status==='settled').length;
+  const notEstimable = rows.filter(r=>r.status!=='settled' && r.balance==null).length;
+  const kpis = [
+    { l:'Accrued Balance', v:fmt(accrued), s:'Estimable & probable · open cases' },
+    { l:'Open Matters', v:openCount, s:notEstimable?`${notEstimable} not yet estimable`:'All estimable' },
+    { l:'Settled Matters', v:settledCount, s:'Closed' },
+    { l:'Total Matters', v:rows.length, s:'Tracked' },
+  ];
+  const kp = document.getElementById('setKpis');
+  if (kp) kp.innerHTML = kpis.map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
+
+  if (!rows.length){
+    tbody.innerHTML = `<tr><td colspan="7" class="dim" style="padding:20px;text-align:center">No matters tracked yet. Use “Add matter” to enter the first case.</td></tr>`;
+    return;
+  }
+  const statusSelect = (r) => `<select class="set-status" onchange="updateSettlement(${r.id},'status',this.value)">`+
+    Object.keys(STATUS_LABELS).map(s=>`<option value="${s}" ${r.status===s?'selected':''}>${STATUS_LABELS[s]}</option>`).join('')+`</select>`;
+  const balDisplay = (r) => r.balance==null
+    ? `<span class="dim" title="Not yet estimable">Not estimable</span>`
+    : fmt(Number(r.balance));
+  tbody.innerHTML = rows.map(r=>{
+    const settledCls = r.status==='settled' ? ' class="set-settled"' : '';
+    return `<tr${settledCls}>
+      <td><input class="set-inp" value="${escapeHtml(r.matter||'')}" onchange="updateSettlement(${r.id},'matter',this.value)"></td>
+      <td><input class="set-inp" value="${escapeHtml(r.firm||'')}" onchange="updateSettlement(${r.id},'firm',this.value)" placeholder="Firm"></td>
+      <td>${statusSelect(r)}</td>
+      <td class="r"><input class="set-inp set-num" value="${r.balance==null?'':r.balance}" onchange="updateSettlement(${r.id},'balance',this.value)" placeholder="—" title="Leave blank if not estimable"></td>
+      <td><input class="set-inp" value="${escapeHtml(r.note||'')}" onchange="updateSettlement(${r.id},'note',this.value)" placeholder="Note"></td>
+      <td><input class="set-inp" value="${escapeHtml(r.review_notes||'')}" onchange="updateSettlement(${r.id},'review_notes',this.value)" placeholder="Review notes"></td>
+      <td><button class="set-del" title="Remove matter" onclick="deleteSettlement(${r.id})">&times;</button></td>
+    </tr>`;
+  }).join('');
+}
+
+async function addSettlement(){
+  const codes = deptsForSelection(activeDept);
+  // write under the active single dept, or the user's home dept in a rollup view
+  const dept = (activeDept && activeDept!=='__ALL__' && childrenOf(activeDept).length===0) ? activeDept : (codes[0] || homeDept);
+  try {
+    const { data, error } = await sb.from('settlements')
+      .insert({ department:dept, matter:'New matter', status:'initial', balance:null }).select().single();
+    if (error) throw error;
+    settlements.push(data);
+    renderSettlements();
+    toast('Matter added');
+  } catch(e){ console.warn('add settlement failed', e); toast('Could not add matter — check connection', true); }
+}
+
+async function updateSettlement(id, field, value){
+  const row = settlements.find(r=>r.id===id);
+  if (!row) return;
+  let val = value;
+  if (field==='balance'){
+    const cleaned = String(value).replace(/[^0-9.\-]/g,'');
+    val = cleaned==='' ? null : Number(cleaned);
+  }
+  row[field] = val;
+  try {
+    const { error } = await sb.from('settlements').update({ [field]:val, updated_at:new Date().toISOString() }).eq('id', id);
+    if (error) throw error;
+    // re-render if a change affects ordering (status or balance)
+    if (field==='status' || field==='balance') renderSettlements();
+  } catch(e){ console.warn('update settlement failed', e); toast('Save failed — check connection', true); }
+}
+
+async function deleteSettlement(id){
+  const row = settlements.find(r=>r.id===id);
+  if (!row) return;
+  if (!confirm(`Remove "${row.matter||'this matter'}" from the tracker?`)) return;
+  try {
+    const { error } = await sb.from('settlements').delete().eq('id', id);
+    if (error) throw error;
+    settlements = settlements.filter(r=>r.id!==id);
+    renderSettlements();
+    toast('Matter removed');
+  } catch(e){ console.warn('delete settlement failed', e); toast('Delete failed — check connection', true); }
+}
+
 const TAB_TITLES = {
   pnl:['Department P&L','Operating cost by category'],
   payroll:['Payroll','Labor cost and roster'],
@@ -702,6 +830,7 @@ const TAB_TITLES = {
   te:['Travel & Entertainment','T&E by GL line'],
   budget:['Budget','Actuals, run-rate and plan'],
   scenario:['Scenario','Plan to land on AOP'],
+  settlements:['Settlements','Legal matters and accrual balances'],
 };
 let activeTab = 'pnl';
 
@@ -724,6 +853,7 @@ function renderActiveTab(){
     case 'te': renderTe(); break;
     case 'budget': renderBudget(); break;
     case 'scenario': renderScenario(); break;
+    case 'settlements': renderSettlements(); break;
   }
 }
 
@@ -780,16 +910,31 @@ function updateHeadings(){
   if (navRev) navRev.textContent = `${shortName(userIdentity.name)}${userIdentity.title?', '+userIdentity.title:''}`;
 }
 
+// Settlements is Legal-only. Show the tab when Legal (3070) is in the current
+// selection, hide it otherwise. If hidden while active, fall back to P&L.
+function updateSettlementsTabVisibility(){
+  const codes = deptsForSelection(activeDept);
+  const showSet = codes.includes('3070');
+  document.querySelectorAll('[data-tab="settlements"]').forEach(el=>{
+    el.style.display = showSet ? '' : 'none';
+  });
+  if (!showSet && activeTab==='settlements'){ showTab('pnl'); }
+}
+
 async function switchDept(val){
   activeDept = val;
   applyActiveDept();
+  await loadSettlements();
   renderDeptSelector();
+  updateSettlementsTabVisibility();
   renderActiveTab();
 }
 
 async function renderDashboard(){
   await loadAll();
+  await loadSettlements();
   renderDeptSelector();
+  updateSettlementsTabVisibility();
   renderActiveTab();
 }
 

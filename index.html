@@ -130,6 +130,18 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 .toast.err{background:var(--red);}
 
 @media(max-width:880px){.kpi-grid{grid-template-columns:1fr 1fr;}.two,.grid-2{grid-template-columns:1fr;}}
+
+/* settlements table */
+.set-tbl td{padding:7px 10px;}
+.set-inp{width:100%;min-width:90px;border:1px solid transparent;border-radius:5px;padding:6px 7px;font-family:inherit;font-size:12px;background:transparent;color:var(--text);outline:none;}
+.set-inp:hover{border-color:#E2E8F0;}
+.set-inp:focus{border-color:var(--accent);background:#fff;}
+.set-num{text-align:right;font-family:'DM Mono',monospace;}
+.set-status{border:1px solid #E2E8F0;border-radius:5px;padding:5px 7px;font-family:inherit;font-size:11px;background:#fff;cursor:pointer;}
+.set-settled{opacity:.6;background:#FAFBFC;}
+.set-settled .set-inp{font-style:italic;}
+.set-del{border:none;background:none;color:var(--subtle);font-size:18px;line-height:1;cursor:pointer;padding:0 6px;border-radius:5px;}
+.set-del:hover{color:var(--red);background:var(--red-bg);}
 </style>
 </head>
 <body>
@@ -167,6 +179,7 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
     <div class="nav-item" data-tab="te" onclick="showTab('te',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h10v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5z"/><path d="M5 5V3a3 3 0 0 1 6 0v2"/></svg>T&amp;E</div>
     <div class="nav-item" data-tab="budget" onclick="showTab('budget',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 6h12M6 6v8"/></svg>Budget</div>
     <div class="nav-item" data-tab="scenario" onclick="showTab('scenario',this)"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3v10h10"/><path d="M3 11l3-3 2 2 5-5"/></svg>Scenario</div>
+    <div class="nav-item" data-tab="settlements" onclick="showTab('settlements',this)" style="display:none"><svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 6l6-3 6 3M3 6v6m10-6v6M2 12h12M6 6v6m4-6v6"/></svg>Settlements</div>
     <div class="nav-foot">
       <div class="nf-lbl">Period</div>
       <div class="nf-val"><span class="live-dot"></span>FY26 · YTD May</div>
@@ -202,6 +215,7 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
         <button class="tab" data-tab="te" onclick="showTab('te',this)"><span class="tab-num">04</span>T&amp;E</button>
         <button class="tab" data-tab="budget" onclick="showTab('budget',this)"><span class="tab-num">05</span>Budget</button>
         <button class="tab" data-tab="scenario" onclick="showTab('scenario',this)"><span class="tab-num">06</span>Scenario</button>
+        <button class="tab" data-tab="settlements" onclick="showTab('settlements',this)" style="display:none"><span class="tab-num">07</span>Settlements</button>
       </div>
 
       <!-- TAB 1 P&L -->
@@ -274,6 +288,28 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
       <div class="panel" id="panel-scenario">
         <div class="kpi-grid" id="scnKpis"></div>
         <div class="note" id="scnNote"></div>
+      </div>
+
+      <!-- TAB 7 SETTLEMENTS (Legal) -->
+      <div class="panel" id="panel-settlements">
+        <div class="kpi-grid" id="setKpis"></div>
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title">Legal Matters &amp; Accruals</div><div class="card-sub">Settlement balance is the estimable and probable accrual · settled matters move to the bottom</div></div>
+            <button class="btn pri" onclick="addSettlement()">+ Add matter</button>
+          </div>
+          <div class="card-body" style="padding:0;">
+            <div style="overflow-x:auto">
+              <table class="tbl set-tbl">
+                <thead><tr>
+                  <th>Matter</th><th>Firm</th><th>Status</th><th class="r">Settlement Balance</th><th>Note</th><th>Review Notes</th><th></th>
+                </tr></thead>
+                <tbody id="setTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="note">A matter with no estimable balance is still tracked: leave the balance blank and it stays on the open list without adding to the accrued total. The accrued balance KPI sums only open matters that are estimable and probable.</div>
       </div>
 
     </div>
