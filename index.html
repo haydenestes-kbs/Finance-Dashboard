@@ -390,7 +390,7 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
     <div class="nav-sec">Department</div>
     <div class="nav-item active">
       <svg class="ni" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
-      Financial Planning &amp; Analysis
+      <span id="navDeptLabel">Financial Planning &amp; Analysis</span>
     </div>
     <div class="nav-sec">Views</div>
     <div class="nav-item" onclick="showTab('spend',this)" data-tab="spend">
@@ -413,7 +413,7 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
       <div class="nf-lbl">Period</div>
       <div class="nf-val"><span class="live-dot"></span>FY26 · YTD May</div>
       <div class="nf-lbl" style="margin-top:10px;">Reviewer</div>
-      <div class="nf-val">B. Fremont, VP FP&amp;A</div>
+      <div class="nf-val" id="navReviewer">B. Fremont, VP FP&amp;A</div>
     </div>
   </nav>
 
@@ -445,7 +445,7 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
       <div class="page-hdr">
         <div>
           <div class="page-title">Financial Planning &amp; Analysis</div>
-          <div class="page-sub">Executive review · Ben Fremont, VP FP&amp;A · May 2026 close</div>
+          <div class="page-sub" id="pageSub">Executive review · Ben Fremont, VP FP&amp;A · May 2026 close</div>
         </div>
         <span class="sync-badge" id="headerBadge"><span class="live-dot off"></span>Loading…</span>
       </div>

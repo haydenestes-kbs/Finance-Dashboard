@@ -27,6 +27,33 @@ let allLineItems = [];       // every visible dept's actual lines (tagged with .
 let isAdminUser = false;     // true if the signed-in user has all-department access
 const DEPT_NAMES = { '3020':'Financial Planning & Analysis','3040':'Information Technology','3041':'IT-Infrastructure','3042':'IT-Development','3070':'Legal','3906':'Sales & SAM','1020':'Field Ops Mgmt-LSS' };
 function deptName(code){ return DEPT_NAMES[code] || code; }
+// Display identity per known user (name + title). Falls back to the email prefix.
+const USER_IDENTITY = {
+  'bfremont@kbs-services.com':      { name:'Ben Fremont',     title:'VP, FP&A' },
+  'hayden.estes@kbs-services.com':  { name:'Hayden Estes',    title:'Director, Finance Transformation' },
+  'isiddiqui@kbs-services.com':     { name:'Irfan Siddiqui',  title:'SVP, Information Technology' },
+  'janet.saura@kbs-services.com':   { name:'Janet Saura',     title:'General Counsel' },
+  'kamonte.mccray@kbs-services.com':{ name:'Kamonte McCray',  title:'Chief Revenue Officer' },
+};
+let userIdentity = { name:'User', title:'' };
+// Short name like "B. Fremont" for the compact sidebar reviewer line.
+function shortName(full){
+  const parts = String(full).trim().split(/\s+/);
+  return parts.length>1 ? `${parts[0][0]}. ${parts.slice(1).join(' ')}` : full;
+}
+// Update all the identity + department labels for the signed-in user and active view.
+function applyIdentity(){
+  const idDept = (activeDept && activeDept!=='__ALL__') ? activeDept : (homeDept || '3020');
+  const consolidated = activeDept === '__ALL__';
+  const navLabel = document.getElementById('navDeptLabel');
+  if (navLabel) navLabel.textContent = consolidated
+    ? (isAdminUser ? 'All Departments' : 'My Departments')
+    : deptName(idDept);
+  const rev = document.getElementById('navReviewer');
+  if (rev) rev.textContent = `${shortName(userIdentity.name)}${userIdentity.title?', '+userIdentity.title:''}`;
+  const sub = document.getElementById('pageSub');
+  if (sub) sub.textContent = `Executive review · ${userIdentity.name}${userIdentity.title?', '+userIdentity.title:''} · May 2026 close`;
+}
 // Department the forecast editor reads/writes. In consolidated mode there is no
 // single target, so fall back to homeDept (the editor is hidden in that mode anyway).
 function forecastDept(){ return (activeDept && activeDept!=='__ALL__') ? activeDept : homeDept; }
@@ -457,9 +484,11 @@ function renderSpend(){
   tvEl.textContent = (tv>=0?'+':'')+fmt(tv);
   tvEl.className = 'num ' + (tv>0?'var-pos':'var-neg');
 
-  // Vendor detail (non-Employees lines)
+  // Vendor detail (non-Employees lines), sorted highest dollar value first
   document.getElementById('vendPeriodHead').textContent = view==='month'?'May 2026':'May 2026';
-  const vlines = lineItems.filter(l=> l.vendor!=='Employees' && l.vendor!=='Other');
+  const vlines = lineItems.filter(l=> l.vendor!=='Employees' && l.vendor!=='Other')
+    .slice()
+    .sort((a,b)=> b.actuals[CURRENT_MONTH_IDX] - a.actuals[CURRENT_MONTH_IDX]);
   let vbody='';
   vlines.forEach(l=>{
     vbody += `<tr>
@@ -1179,6 +1208,7 @@ function updateDeptHeading(){
   if (fcNote) fcNote.style.display = isAll ? 'block' : 'none';
   const fcTable = document.getElementById('forecastTable');
   if (fcTable) fcTable.style.display = isAll ? 'none' : '';
+  applyIdentity();
 }
 
 // User picked a different department in the dropdown.
@@ -1199,6 +1229,7 @@ async function switchDept(val){
 async function renderDashboard(){
   await loadAll();
   renderDeptSelector();
+  applyIdentity();
   renderSpend();
   renderMix();
   renderTrend();
@@ -1211,10 +1242,13 @@ async function enterApp(session){
   // set reviewer identity from the signed-in email
   const email = session?.user?.email || 'user';
   const namePart = email.split('@')[0];
-  REVIEWER = namePart.charAt(0).toUpperCase() + namePart.slice(1); // e.g. "Ben"
+  userIdentity = USER_IDENTITY[email.toLowerCase()] || { name: namePart.charAt(0).toUpperCase()+namePart.slice(1), title:'' };
+  REVIEWER = userIdentity.name;
   await resolveDepartments(email);
   document.getElementById('topbarUser').textContent = email;
-  document.getElementById('topbarAvatar').textContent = namePart.slice(0,2).toUpperCase();
+  // avatar: initials from the resolved display name
+  const initials = userIdentity.name.split(/\s+/).map(p=>p[0]).slice(0,2).join('').toUpperCase();
+  document.getElementById('topbarAvatar').textContent = initials;
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appShell').style.display = 'flex';
   try {
