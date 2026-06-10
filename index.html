@@ -423,7 +423,7 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
     <!-- TOPBAR -->
     <div class="topbar">
       <div class="topbar-left">
-        <select class="psel">
+        <select class="psel" id="deptSelect" onchange="switchDept(this.value)">
           <option>Financial Planning &amp; Analysis</option>
         </select>
         <select class="psel">
@@ -645,6 +645,9 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
             <span class="badge bok" id="autoSaveBadge">Auto-save on</span>
           </div>
           <div class="card-body" style="padding:0;">
+            <div id="fcConsolidatedNote" style="display:none;padding:24px;color:var(--muted);font-size:13px;text-align:center;">
+              You're viewing <strong>Consolidated</strong> across multiple departments. The line-item forecast editor works on one department at a time — pick a specific department from the selector at the top to edit its forecast.
+            </div>
             <div class="forecast-table-wrap">
               <table class="ftbl" id="forecastTable"></table>
             </div>

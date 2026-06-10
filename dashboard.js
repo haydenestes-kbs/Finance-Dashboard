@@ -22,6 +22,13 @@ let REVIEWER = 'Reviewer';   // set from the signed-in user's email after login
 // Department scoping. Resolved after login from shared.visible_departments().
 let visibleDepts = [];       // every department code the signed-in user may see
 let homeDept = null;         // the department new rows are written under
+let activeDept = null;       // current selector value: a dept code, or '__ALL__' for consolidated
+let allLineItems = [];       // every visible dept's actual lines (tagged with .department)
+const DEPT_NAMES = { '3020':'Financial Planning & Analysis','3040':'Information Technology','3041':'IT-Infrastructure','3042':'IT-Development','3070':'Legal','3906':'Sales & SAM','1020':'Field Ops Mgmt-LSS' };
+function deptName(code){ return DEPT_NAMES[code] || code; }
+// Department the forecast editor reads/writes. In consolidated mode there is no
+// single target, so fall back to homeDept (the editor is hidden in that mode anyway).
+function forecastDept(){ return (activeDept && activeDept!=='__ALL__') ? activeDept : homeDept; }
 
 // =============================================================
 // STATIC STRUCTURE (not sensitive): month layout + Hayden's terms.
@@ -170,14 +177,50 @@ async function loadActuals(){
     .in('department', visibleDepts)
     .order('sort_order',{ascending:true});
   if (error) throw error;
-  lineItems = (data||[]).map(r=>({
-    id:r.id, label:r.label, cat:r.cat, vendor:r.vendor,
+  allLineItems = (data||[]).map(r=>({
+    id:r.id, label:r.label, cat:r.cat, vendor:r.vendor, department:r.department,
     actuals:[Number(r.jan),Number(r.feb),Number(r.mar),Number(r.apr),Number(r.may)]
   }));
-  // recompute benefits ratio from real actuals
-  const sal = (lineItems.find(l=>l.id==='salary')||{actuals:[0]}).actuals.reduce((a,b)=>a+b,0);
-  const ben = (lineItems.find(l=>l.id==='benefits')||{actuals:[0]}).actuals.reduce((a,b)=>a+b,0)
-            + (lineItems.find(l=>l.id==='anthem')||{actuals:[0]}).actuals.reduce((a,b)=>a+b,0);
+  applyActiveDept();   // sets lineItems from allLineItems based on activeDept
+}
+
+// Which department codes are "children" we can drill into (everything except the
+// synthetic consolidated bucket). Used to build the selector.
+function drillDepts(){
+  // departments that actually have data loaded
+  const set = Array.from(new Set(allLineItems.map(l=>l.department)));
+  set.sort();
+  return set;
+}
+
+// Rebuild lineItems from allLineItems for the current activeDept.
+// - single dept code: just that department's lines (full detail)
+// - '__ALL__' consolidated: one synthetic line per category (rollup), no vendor detail
+function applyActiveDept(){
+  const depts = drillDepts();
+  if (!activeDept){
+    // default: consolidated if more than one dept, else the single dept
+    activeDept = depts.length > 1 ? '__ALL__' : (depts[0] || homeDept);
+  }
+  if (activeDept === '__ALL__'){
+    // category rollup across all visible depts
+    const byCat = {};
+    allLineItems.forEach(l=>{
+      const c = byCat[l.cat] || (byCat[l.cat] = [0,0,0,0,0]);
+      l.actuals.forEach((v,i)=> c[i]+=v);
+    });
+    lineItems = Object.keys(byCat).map((cat,idx)=>({
+      id:`roll_${cat}`, label:(catMeta[cat]?catMeta[cat].label:cat), cat, vendor:'Consolidated',
+      actuals:byCat[cat]
+    }));
+  } else {
+    lineItems = allLineItems.filter(l=>l.department===activeDept).map(l=>({
+      id:l.id, label:l.label, cat:l.cat, vendor:l.vendor, actuals:l.actuals.slice()
+    }));
+  }
+  // recompute benefits ratio from whatever is in view
+  const sal = (lineItems.find(l=>l.id==='salary'||l.id==='roll_payroll')||{actuals:[0]}).actuals.reduce((a,b)=>a+b,0);
+  const ben = lineItems.filter(l=>l.cat==='benefits').reduce((s,l)=>s+l.actuals.reduce((a,b)=>a+b,0),0);
   benefitsRatio = sal>0 ? ben/sal : 0.1395;
   buildHaydenLines();
 }
@@ -234,9 +277,7 @@ async function loadAll(){
     customLines = (clRows||[]).map(r=>({ id:r.id, label:r.label, section:r.cat, cat:SECTION_DEFAULT_CAT[r.cat]||'other', custom:true }));
   } catch(e){ customLines = []; }
   // forecast
-  const { data: fcRow } = await sb.from('forecast').select('data')
-    .eq('department', homeDept).maybeSingle();
-  forecastState = { ...buildDefaultForecast(), ...(fcRow && fcRow.data ? fcRow.data : {}) };
+  await loadForecastForDept();
   // comments
   const { data: cmts } = await sb.from('comments').select('*')
     .in('department', visibleDepts).order('created_at',{ascending:true});
@@ -248,10 +289,22 @@ async function loadAll(){
   setConn(true, 'Supabase · synced');
 }
 
+// Load (or default) the forecast for the department the editor currently targets.
+async function loadForecastForDept(){
+  try {
+    const { data: fcRow } = await sb.from('forecast').select('data')
+      .eq('department', forecastDept()).maybeSingle();
+    forecastState = { ...buildDefaultForecast(), ...(fcRow && fcRow.data ? fcRow.data : {}) };
+  } catch(e){
+    console.warn('forecast load failed', e);
+    forecastState = buildDefaultForecast();
+  }
+}
+
 async function saveForecastCloud(){
   try {
     await sb.from('forecast').upsert(
-      { department:homeDept, reviewer:REVIEWER, data:forecastState, updated_at:new Date().toISOString() },
+      { department:forecastDept(), reviewer:REVIEWER, data:forecastState, updated_at:new Date().toISOString() },
       { onConflict:'department' });
   } catch(e){ console.warn('forecast save failed', e); toast('Save failed — check connection', true); }
 }
@@ -1073,8 +1126,55 @@ function showLogin(msg){
   if (msg) document.getElementById('loginError').textContent = msg;
 }
 
+// Populate the department selector based on what the user can see.
+// Shows "IT Consolidated" + each child when >1 dept; hides (single option) otherwise.
+function renderDeptSelector(){
+  const sel = document.getElementById('deptSelect');
+  if (!sel) return;
+  const depts = drillDepts();
+  let opts = '';
+  if (depts.length > 1){
+    opts += `<option value="__ALL__">Consolidated · all my departments</option>`;
+    depts.forEach(d=> opts += `<option value="${d}">${d} · ${deptName(d)}</option>`);
+  } else {
+    const d = depts[0] || homeDept;
+    opts = `<option value="${d}">${d} · ${deptName(d)}</option>`;
+  }
+  sel.innerHTML = opts;
+  sel.value = activeDept;
+  // reflect selection in the page title + forecast availability
+  updateDeptHeading();
+}
+
+function updateDeptHeading(){
+  const isAll = activeDept === '__ALL__';
+  const title = isAll ? 'IT Consolidated' : `${activeDept} · ${deptName(activeDept)}`;
+  const tEl = document.querySelector('.page-title'); if (tEl) tEl.textContent = title;
+  // In consolidated mode the line-level forecast editor is not meaningful; show a notice.
+  const fcNote = document.getElementById('fcConsolidatedNote');
+  if (fcNote) fcNote.style.display = isAll ? 'block' : 'none';
+  const fcTable = document.getElementById('forecastTable');
+  if (fcTable) fcTable.style.display = isAll ? 'none' : '';
+}
+
+// User picked a different department in the dropdown.
+async function switchDept(val){
+  activeDept = val;
+  applyActiveDept();
+  // reload the forecast for the newly targeted department (skip in consolidated mode)
+  if (activeDept !== '__ALL__'){ await loadForecastForDept(); }
+  // re-render everything from the new view (actuals already in memory)
+  renderSpend();
+  renderMix();
+  renderTrend();
+  renderTE();
+  renderForecast();
+  updateDeptHeading();
+}
+
 async function renderDashboard(){
   await loadAll();
+  renderDeptSelector();
   renderSpend();
   renderMix();
   renderTrend();
