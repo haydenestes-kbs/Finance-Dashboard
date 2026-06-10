@@ -401,6 +401,7 @@ function showTab(name, el){
   document.querySelectorAll('.nav-item[data-tab]').forEach(n=>n.classList.remove('active'));
   document.querySelectorAll(`.tab[data-tab="${name}"], .nav-item[data-tab="${name}"]`).forEach(e=>e.classList.add('active'));
   document.getElementById('panel-'+name).classList.add('active');
+  if (name==='workforce') wfRenderAll();
 }
 
 // =============================================================
@@ -1219,6 +1220,283 @@ document.getElementById('exportBtn').addEventListener('click', exportSnapshot);
 document.getElementById('addReqBtn').addEventListener('click', openReqModal);
 
 // =============================================================
+// WORKFORCE TIMELINE  (hires/exits across 2026 + headcount census)
+// Scope follows the top department selector + the user's access.
+// Sample data for now; swap WF_EVENTS for a personnel_events query.
+// =============================================================
+const WF_START_HC = { '1020':24, '3906':11, '3040':9, '3070':4, '3020':12 };
+const WF_EVENTS = [
+  // 1020 Field Ops Mgmt-LSS — high churn
+  { dept:'1020', name:'Greg Sanders',   role:'Area Operations Manager',  type:'term', labor:'indirect', date:'2026-01-30' },
+  { dept:'1020', name:'Marcus Webb',    role:'Area Operations Manager',  type:'hire', labor:'indirect', date:'2026-02-09' },
+  { dept:'1020', name:'Tasha Greene',   role:'Site Supervisor',          type:'hire', labor:'direct',   date:'2026-03-02' },
+  { dept:'1020', name:'Holly Tran',     role:'Operations Coordinator',   type:'term', labor:'indirect', date:'2026-03-13' },
+  { dept:'1020', name:'Luis Romero',    role:'Account Manager',          type:'hire', labor:'indirect', date:'2026-03-23' },
+  { dept:'1020', name:'Sam Okafor',     role:'Site Supervisor',          type:'term', labor:'direct',   date:'2026-04-24' },
+  { dept:'1020', name:'Priya Nair',     role:'Operations Analyst',       type:'hire', labor:'indirect', date:'2026-05-04' },
+  { dept:'1020', name:'Devon Clarke',   role:'Site Supervisor',          type:'hire', labor:'direct',   date:'2026-06-15' },
+  { dept:'1020', name:'Bianca Lopez',   role:'Account Manager',          type:'term', labor:'indirect', date:'2026-07-08' },
+  { dept:'1020', name:'Renee Adler',    role:'Regional Manager',         type:'hire', labor:'indirect', date:'2026-08-03' },
+  { dept:'1020', name:'Nate Briggs',    role:'Regional Manager',         type:'term', labor:'indirect', date:'2026-08-28' },
+  { dept:'1020', name:'Omar Farah',     role:'Operations Coordinator',   type:'hire', labor:'indirect', date:'2026-09-14' },
+  { dept:'1020', name:'Kelly Pace',     role:'Site Supervisor',          type:'hire', labor:'direct',   date:'2026-10-19' },
+  { dept:'1020', name:'Cara Whitfield', role:'Operations Analyst',       type:'term', labor:'indirect', date:'2026-11-06' },
+  // 3906 Sales & SAM
+  { dept:'3906', name:'Rick Padilla',   role:'Strategic Account Manager',type:'term', labor:'indirect', date:'2026-02-17' },
+  { dept:'3906', name:'Jordan Mathis',  role:'Strategic Account Manager',type:'hire', labor:'indirect', date:'2026-04-06' },
+  { dept:'3906', name:'Alyssa Bend',    role:'Sales Director',           type:'hire', labor:'indirect', date:'2026-07-20' },
+  { dept:'3906', name:'Tom Vesey',      role:'Sales Representative',     type:'term', labor:'indirect', date:'2026-09-02' },
+  // 3040 IT
+  { dept:'3040', name:'Anita Roy',      role:'Systems Engineer',         type:'hire', labor:'indirect', date:'2026-03-30' },
+  { dept:'3040', name:'Dana Felix',     role:'Help Desk Lead',           type:'term', labor:'indirect', date:'2026-06-01' },
+  { dept:'3040', name:'Kevin Liu',      role:'Security Analyst',         type:'hire', labor:'indirect', date:'2026-08-11' },
+  // 3070 Legal
+  { dept:'3070', name:'Grace Okwu',     role:'Contracts Counsel',        type:'hire', labor:'indirect', date:'2026-05-18' },
+  // 3020 FP&A
+  { dept:'3020', name:'Pat Nolan',      role:'Financial Analyst',        type:'term', labor:'indirect', date:'2026-03-16' },
+  { dept:'3020', name:'Hayden Estes',   role:'Director, Finance Transformation', type:'hire', labor:'indirect', date:'2026-05-31' },
+];
+
+let wfTypeFilter = 'all';     // all | hire | term
+let wfLaborFilter = 'all';    // all | indirect | direct
+let wfWired = false;
+
+const WF_YEAR_START = new Date('2026-01-01T00:00:00');
+const WF_YEAR_END   = new Date('2026-12-31T00:00:00');
+const WF_SPAN = WF_YEAR_END - WF_YEAR_START;
+const WF_PAD_L = 30, WF_PAD_R = 30, WF_LANE_H = 17, WF_DOT_R = 6, WF_GAP = 18, WF_CENTER_GAP = 18;
+
+function wfFrac(dateStr){ return (new Date(dateStr+'T00:00:00') - WF_YEAR_START) / WF_SPAN; }
+function wfFmtDate(dateStr){ return new Date(dateStr+'T00:00:00').toLocaleDateString([], {month:'short', day:'numeric', year:'numeric'}); }
+
+// in-scope departments = the top selector (or all visible depts when consolidated)
+function wfScopeDepts(){
+  if (activeDept && activeDept !== '__ALL__') return [activeDept];
+  return (visibleDepts && visibleDepts.length) ? visibleDepts.slice() : ['3020'];
+}
+function wfInScope(e){ return wfScopeDepts().includes(e.dept); }
+function wfStartHC(){ return wfScopeDepts().reduce((s,d)=> s + (WF_START_HC[d]||0), 0); }
+function wfConsolidated(){ return wfScopeDepts().length > 1; }
+
+function wfDotEvents(){
+  return WF_EVENTS.map((e,i)=>({ ...e, _i:i }))
+    .filter(e => wfInScope(e)
+      && (wfTypeFilter==='all' || e.type===wfTypeFilter)
+      && (wfLaborFilter==='all' || e.labor===wfLaborFilter));
+}
+function wfStatEvents(){
+  return WF_EVENTS.filter(e => wfInScope(e) && (wfLaborFilter==='all' || e.labor===wfLaborFilter));
+}
+function wfCensusEvents(){
+  return WF_EVENTS.filter(wfInScope).slice().sort((a,b)=> new Date(a.date) - new Date(b.date));
+}
+
+function wfRenderKPIs(){
+  const wrap = document.getElementById('wfKpis');
+  if (!wrap) return;
+  const evs = wfStatEvents();
+  const hires = evs.filter(e=>e.type==='hire').length;
+  const terms = evs.filter(e=>e.type==='term').length;
+  const net = hires - terms;
+  const deptEvs = WF_EVENTS.filter(wfInScope);
+  const indNet = deptEvs.filter(e=>e.labor==='indirect'&&e.type==='hire').length
+               - deptEvs.filter(e=>e.labor==='indirect'&&e.type==='term').length;
+  const cur = wfStartHC() + deptEvs.filter(e=>e.type==='hire').length - deptEvs.filter(e=>e.type==='term').length;
+  const netCls = net>0?'up':net<0?'dn':'';
+  const indCls = indNet>0?'up':indNet<0?'dn':'';
+  const laborSub = wfLaborFilter==='all' ? 'All labor' : wfLaborFilter+' only';
+  const cards = [
+    { label:'Current Headcount', val:cur, sub:`Jan 1: ${wfStartHC()}` },
+    { label:'Hires YTD', val:hires, sub:laborSub },
+    { label:'Exits YTD', val:terms, sub:laborSub },
+    { label:'Net Change', val:(net>0?'+':'')+net, cls:netCls,
+      sub:`<span class="${indCls}">${indNet>0?'+':''}${indNet}</span> from indirect labor` },
+  ];
+  wrap.innerHTML = cards.map(c=>`
+    <div class="kpi">
+      <div class="kpi-label">${c.label}</div>
+      <div class="kpi-val ${c.cls||''}">${c.val}</div>
+      <div class="kpi-sub">${c.sub}</div>
+    </div>`).join('');
+}
+
+function wfAssignLanes(items){
+  const lastX = [];
+  items.forEach(it=>{
+    let placed = false;
+    for (let i=0;i<lastX.length;i++){
+      if (it.x - lastX[i] >= WF_GAP){ it.lane=i; lastX[i]=it.x; placed=true; break; }
+    }
+    if (!placed){ it.lane=lastX.length; lastX.push(it.x); }
+  });
+  return lastX.length;
+}
+
+function wfRenderTimeline(){
+  const svg = document.getElementById('wfTlSvg');
+  if (!svg) return;
+  const W = svg.clientWidth || svg.parentElement.clientWidth || 820;
+  const plotW = W - WF_PAD_L - WF_PAD_R;
+  const evs = wfDotEvents().map(e=>({ ...e, x: WF_PAD_L + wfFrac(e.date)*plotW }));
+  const hires = evs.filter(e=>e.type==='hire').sort((a,b)=>a.x-b.x);
+  const terms = evs.filter(e=>e.type==='term').sort((a,b)=>a.x-b.x);
+  const hLanes = wfAssignLanes(hires);
+  const tLanes = wfAssignLanes(terms);
+  const topH = Math.max(1,hLanes)*WF_LANE_H + 26;
+  const botH = Math.max(1,tLanes)*WF_LANE_H + 26;
+  const centerY = topH;
+  const H = topH + botH + 18;
+  svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  let s = '';
+  for (let m=0;m<12;m++){
+    const fx = WF_PAD_L + wfFrac(`2026-${String(m+1).padStart(2,'0')}-01`)*plotW;
+    s += `<line x1="${fx}" y1="14" x2="${fx}" y2="${H-14}" stroke="#EEF2F7" stroke-width="1"/>`;
+    s += `<text x="${fx+4}" y="${H-4}" font-size="10" fill="#94A3B8" font-family="DM Mono,monospace">${months[m]}</text>`;
+  }
+  s += `<line x1="${WF_PAD_L}" y1="${centerY}" x2="${W-WF_PAD_R}" y2="${centerY}" stroke="#CBD5E1" stroke-width="1.5"/>`;
+
+  const plot = (list, dir) => {
+    list.forEach(e=>{
+      const y = centerY + dir*(WF_CENTER_GAP + e.lane*WF_LANE_H);
+      const color = e.type==='hire' ? 'var(--hire)' : 'var(--term)';
+      s += `<line x1="${e.x}" y1="${centerY}" x2="${e.x}" y2="${y}" stroke="${color}" stroke-width="1" opacity="0.35"/>`;
+      if (e.labor==='direct'){
+        s += `<circle class="wf-dot" data-i="${e._i}" cx="${e.x}" cy="${y}" r="${WF_DOT_R}" fill="#fff" stroke="${color}" stroke-width="2.5"/>`;
+      } else {
+        s += `<circle class="wf-dot" data-i="${e._i}" cx="${e.x}" cy="${y}" r="${WF_DOT_R}" fill="${color}"/>`;
+      }
+    });
+  };
+  plot(hires,-1);
+  plot(terms,+1);
+
+  svg.innerHTML = s;
+  wfWireDots();
+  const shown = evs.length;
+  const sub = document.getElementById('wfTlSub');
+  if (sub) sub.textContent = `${shown} event${shown===1?'':'s'} in view · hover any dot for the person`;
+}
+
+function wfRenderCensus(){
+  const svg = document.getElementById('wfCensusSvg');
+  if (!svg) return;
+  const W = svg.clientWidth || svg.parentElement.clientWidth || 820;
+  const H = 86;
+  const plotW = W - WF_PAD_L - WF_PAD_R;
+  const top = 14, bot = H - 20;
+
+  let hc = wfStartHC();
+  const pts = [{ f:0, hc }];
+  wfCensusEvents().forEach(e=>{ hc += (e.type==='hire'?1:-1); pts.push({ f:wfFrac(e.date), hc }); });
+  pts.push({ f:1, hc });
+
+  const vals = pts.map(p=>p.hc);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi===lo){ hi+=1; lo-=1; }
+  const padv = Math.max(1, Math.round((hi-lo)*0.2)); lo-=padv; hi+=padv;
+  const X = f => WF_PAD_L + f*plotW;
+  const Y = v => bot - ((v-lo)/(hi-lo))*(bot-top);
+
+  let line = `M ${X(pts[0].f)} ${Y(pts[0].hc)}`;
+  for (let i=1;i<pts.length;i++){
+    line += ` L ${X(pts[i].f)} ${Y(pts[i-1].hc)} L ${X(pts[i].f)} ${Y(pts[i].hc)}`;
+  }
+  const area = line + ` L ${X(1)} ${bot} L ${X(0)} ${bot} Z`;
+
+  let s = '';
+  for (let m=0;m<12;m++){
+    const fx = X(wfFrac(`2026-${String(m+1).padStart(2,'0')}-01`));
+    s += `<line x1="${fx}" y1="${top}" x2="${fx}" y2="${bot}" stroke="#EEF2F7" stroke-width="1"/>`;
+  }
+  s += `<path d="${area}" fill="rgba(26,86,160,0.07)"/>`;
+  s += `<path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
+  s += `<circle cx="${X(0)}" cy="${Y(pts[0].hc)}" r="3" fill="var(--accent)"/>`;
+  s += `<text x="${X(0)+6}" y="${Y(pts[0].hc)-6}" font-size="11" fill="var(--accent)" font-family="DM Mono,monospace">${pts[0].hc}</text>`;
+  const last = pts[pts.length-1];
+  s += `<circle cx="${X(1)}" cy="${Y(last.hc)}" r="3.5" fill="var(--accent)"/>`;
+  s += `<text x="${X(1)-8}" y="${Y(last.hc)-7}" font-size="11" fill="var(--accent)" font-family="DM Mono,monospace" text-anchor="end">${last.hc}</text>`;
+
+  svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = s;
+}
+
+function wfWireDots(){
+  const tip = document.getElementById('wfTip');
+  if (!tip) return;
+  const place = (ev) => {
+    let x = ev.clientX + 14, y = ev.clientY + 14;
+    const r = tip.getBoundingClientRect();
+    if (x + r.width > window.innerWidth - 10) x = ev.clientX - r.width - 14;
+    if (y + r.height > window.innerHeight - 10) y = ev.clientY - r.height - 14;
+    tip.style.left = x + 'px'; tip.style.top = y + 'px';
+  };
+  document.querySelectorAll('#wfTlSvg .wf-dot').forEach(d=>{
+    d.addEventListener('mouseenter', ev=>{
+      const e = WF_EVENTS[+d.dataset.i];
+      if (!e) return;
+      const typeTag = e.type==='hire'
+        ? '<span class="wf-tag wf-tag-hire">New hire</span>'
+        : '<span class="wf-tag wf-tag-term">Exit</span>';
+      const laborTag = e.labor==='indirect'
+        ? '<span class="wf-tag wf-tag-ind">Indirect</span>'
+        : '<span class="wf-tag wf-tag-dir">Direct</span>';
+      const deptLine = wfConsolidated()
+        ? `<div class="wf-tip-dept">${deptName(e.dept)} (${e.dept})</div>` : '';
+      tip.innerHTML = `
+        <div class="wf-tip-name">${escapeHtml(e.name)}</div>
+        <div class="wf-tip-role">${escapeHtml(e.role)}</div>
+        ${deptLine}
+        <div class="wf-tip-row">${typeTag}${laborTag}</div>
+        <div class="wf-tip-date">${wfFmtDate(e.date)}</div>`;
+      tip.classList.add('show');
+      place(ev);
+    });
+    d.addEventListener('mousemove', place);
+    d.addEventListener('mouseleave', ()=> tip.classList.remove('show'));
+  });
+}
+
+function wfRenderAll(){
+  wfRenderKPIs();
+  wfRenderTimeline();
+  wfRenderCensus();
+}
+
+function wfInit(){
+  if (!wfWired){
+    document.querySelectorAll('#wfTypeChips .wf-chip').forEach(c=>{
+      c.addEventListener('click', ()=>{
+        document.querySelectorAll('#wfTypeChips .wf-chip').forEach(x=>x.classList.remove('active'));
+        c.classList.add('active'); wfTypeFilter = c.dataset.type; wfRenderAll();
+      });
+    });
+    document.querySelectorAll('#wfLaborChips .wf-chip').forEach(c=>{
+      c.addEventListener('click', ()=>{
+        document.querySelectorAll('#wfLaborChips .wf-chip').forEach(x=>x.classList.remove('active'));
+        c.classList.add('active'); wfLaborFilter = c.dataset.labor; wfRenderAll();
+      });
+    });
+    wfWired = true;
+  }
+  const note = document.getElementById('wfNote');
+  if (note) note.innerHTML =
+    `<b>Reading this:</b> dots above the line are hires, below are exits. A filled dot is indirect labor, `+
+    `a ring is direct. Stacked columns mean several moves in the same stretch (see Field Ops). The blue curve `+
+    `underneath is the running headcount, so you get the census level and the period-over-period flow in one view. `+
+    `Scope follows the department selector at the top. <b>Sample data</b> for review; the live version reads from a personnel-events table.`;
+  wfRenderKPIs();
+}
+
+let wfResizeT;
+window.addEventListener('resize', ()=>{ clearTimeout(wfResizeT); wfResizeT = setTimeout(()=>{
+  const p = document.getElementById('panel-workforce');
+  if (p && p.classList.contains('active')){ wfRenderTimeline(); wfRenderCensus(); }
+}, 120); });
+
+// =============================================================
 // AUTH GATE + INIT
 // =============================================================
 function showLogin(msg){
@@ -1274,6 +1552,7 @@ async function switchDept(val){
   renderTE();
   renderForecast();
   updateDeptHeading();
+  if (document.getElementById('panel-workforce') && document.getElementById('panel-workforce').classList.contains('active')) wfRenderAll();
 }
 
 async function renderDashboard(){
@@ -1286,6 +1565,7 @@ async function renderDashboard(){
   renderTE();
   renderForecast();
   renderOrg();
+  wfInit();
 }
 
 async function enterApp(session){
