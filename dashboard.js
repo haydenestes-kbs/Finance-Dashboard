@@ -232,11 +232,32 @@ function applyActiveDept(){
 async function resolveDepartments(email){
   visibleDepts = [];
   homeDept = null;
+  // Call shared.visible_departments(). The client defaults to the 'finance' schema,
+  // so we must explicitly target 'shared'. Try the JS client first; if the RPC
+  // can't be schema-routed in this supabase-js version, fall back to REST with the
+  // Content-Profile header that selects the shared schema.
   try {
-    const { data: vis, error: vErr } = await sb.rpc('visible_departments');
+    let vis = null, vErr = null;
+    if (typeof sb.schema === 'function') {
+      const r = await sb.schema('shared').rpc('visible_departments');
+      vis = r.data; vErr = r.error;
+    } else { vErr = new Error('no .schema()'); }
     if (vErr) throw vErr;
     visibleDepts = (vis || []).map(r => r.department);
-  } catch(e){ console.warn('visible_departments failed', e); }
+  } catch(e){
+    console.warn('visible_departments via client failed, trying REST', e);
+    try {
+      const token = (await sb.auth.getSession()).data.session.access_token;
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/visible_departments`, {
+        method: 'POST',
+        headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${token}`,
+                   'Content-Type': 'application/json',
+                   'Content-Profile': 'shared', 'Accept-Profile': 'shared' },
+        body: '{}' });
+      const rows = await resp.json();
+      if (Array.isArray(rows)) visibleDepts = rows.map(r => r.department);
+    } catch(e2){ console.warn('visible_departments REST fallback failed', e2); }
+  }
   // home department (where new rows are written): read the user's access row.
   try {
     let acc = null;
