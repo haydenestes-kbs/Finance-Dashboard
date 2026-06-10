@@ -557,36 +557,80 @@ function renderPnlCharts(){
 }
 
 // ---- TAB 2: PAYROLL ------------------------------------------------------
-// We have payroll/benefits COST TOTALS (real), but no employee roster yet.
-// Show the real cost totals; stub the roster with a connect-Workday note.
+// Real GL cost totals (payroll/benefits) + the employee roster (sample comp).
 function renderPayroll(){
   const payLines = lineItems.filter(l=>l.cat==='payroll' || l.cat==='benefits');
   const payYtd = payLines.filter(l=>l.cat==='payroll').reduce((s,l)=>s+ytd(l.actuals),0);
   const benYtd = payLines.filter(l=>l.cat==='benefits').reduce((s,l)=>s+ytd(l.actuals),0);
   const payMay = payLines.filter(l=>l.cat==='payroll').reduce((s,l)=>s+l.actuals[CURRENT_MONTH_IDX],0);
-  const loadedYtd = payYtd+benYtd;
+  // budgeted labor YTD: run-rate baseline of the payroll lines (interim until real budget loads)
+  const budLaborYtd = payLines.filter(l=>l.cat==='payroll').reduce((s,l)=>s+avg(l.actuals)*ACTUAL_MONTHS,0);
+
   const kpis = [
     { l:'Payroll · May', v:fmt(payMay), s:'Salary, wages, OT' },
     { l:'Payroll · YTD', v:fmt(payYtd), s:'Jan–May' },
     { l:'Benefits & Taxes · YTD', v:fmt(benYtd), s:payYtd?`${Math.round(benYtd/payYtd*100)}% of payroll`:'—' },
-    { l:'Loaded Labor · YTD', v:fmt(loadedYtd), s:'Payroll + benefits' },
+    { l:'Budgeted Labor · YTD', v:fmt(budLaborYtd), s:'Run-rate baseline' },
   ];
   document.getElementById('payKpis').innerHTML = kpis.map(k=>
     `<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
 
-  // Real monthly labor cost table (what we DO have)
-  let rows = payLines.sort((a,b)=>ytd(b.actuals)-ytd(a.actuals)).map(l=>
-    `<tr><td class="strong">${l.label}</td><td class="dim">${catMeta[l.cat]?catMeta[l.cat].label:l.cat}</td>`+
-    l.actuals.map(v=>`<td class="r">${v?fmt(v):'<span class="dim">–</span>'}</td>`).join('')+
-    `<td class="r strong">${fmt(ytd(l.actuals))}</td></tr>`).join('');
-  document.getElementById('payTable').innerHTML =
-    `<thead><tr><th>Labor Line</th><th>Category</th>${months.slice(0,ACTUAL_MONTHS).map(m=>`<th class="r">${m}</th>`).join('')}<th class="r">YTD</th></tr></thead><tbody>${rows||''}</tbody>`;
+  // ----- headcount metrics row -----
+  const active = employees.filter(e=>e.status==='active');
+  const opens = employees.filter(e=>e.status==='open');
+  const backfills = opens.filter(e=>e.backfill_for);
+  const newReqs = opens.filter(e=>!e.backfill_for);
+  const termed = employees.filter(e=>e.status==='termed');
+  const hcRow = document.getElementById('payHcRow');
+  if (hcRow){
+    const cards = [
+      { l:'Active Headcount', v:active.length, s:'Filled positions' },
+      { l:'Open Headcount', v:newReqs.length, s:'New positions' },
+      { l:'Open Backfills', v:backfills.length, s:'Replacing exits' },
+      { l:'Recent Exits', v:termed.length, s:'Termed' },
+    ];
+    hcRow.innerHTML = cards.map(c=>`<div class="kpi"><div class="kpi-label">${c.l}</div><div class="kpi-val">${c.v}</div><div class="kpi-sub">${c.s}</div></div>`).join('');
+  }
 
-  // Roster stub — we have totals, not per-employee detail
-  document.getElementById('payRosterNote').innerHTML =
-    `<b>Employee roster — not connected.</b> This department's payroll <em>totals</em> above are live from the GL. `+
-    `Per-employee detail (roster, hire/term dates, merit planning, headcount roll-forward) needs a feed from the HR system. `+
-    `Once Workday or the payroll export is wired in, the roster and headcount roll-forward render here and drive the forecast.`;
+  // ----- recent activity (attrition) -----
+  const actBody = document.getElementById('payActivityBody');
+  if (actBody){
+    const recent = termed.slice().sort((a,b)=> (b.term_date||'').localeCompare(a.term_date||''));
+    actBody.innerHTML = recent.length ? recent.map(e=>`
+      <tr><td class="dim">${e.emp_code||'—'}</td><td class="strong">${escapeHtml(e.name||'—')}</td>
+      <td>${escapeHtml(e.title||'')}</td><td class="dim">${fmtDate(e.hire_date)}</td>
+      <td class="dim">${fmtDate(e.term_date)}</td><td class="r">${e.base_salary?fmt(e.base_salary):'—'}</td>
+      <td class="r dim">${e.bonus_pct?e.bonus_pct+'%':'—'}</td></tr>`).join('')
+      : `<tr><td colspan="7" class="dim" style="padding:16px;text-align:center">No recent exits.</td></tr>`;
+  }
+
+  // ----- current employee listing -----
+  const empBody = document.getElementById('payEmpBody');
+  if (empBody){
+    empBody.innerHTML = active.length ? active.map(e=>`
+      <tr><td class="dim">${e.emp_code||'—'}</td><td class="strong">${escapeHtml(e.name||'—')}</td>
+      <td>${escapeHtml(e.title||'')}</td><td class="dim">${escapeHtml(e.reports_to||'')}</td>
+      <td>${e.grade?`<span class="badge bmuted">${e.grade}</span>`:''}</td>
+      <td class="dim">${fmtDate(e.hire_date)}</td>
+      <td class="r">${e.base_salary?fmt(e.base_salary):'—'}</td>
+      <td class="r dim">${e.bonus_pct?e.bonus_pct+'%':'—'}</td>
+      <td class="r strong">${fmt(empAllIn(e))}</td></tr>`).join('')
+      : `<tr><td colspan="9" class="dim" style="padding:16px;text-align:center">No active employees loaded for this department.</td></tr>`;
+    const sub = document.getElementById('payEmpSub');
+    if (sub) sub.textContent = `${active.length} active · all-in annual comp (sample)`;
+  }
+
+  // ----- open positions -----
+  const openBody = document.getElementById('payOpenBody');
+  if (openBody){
+    openBody.innerHTML = opens.length ? opens.map(e=>`
+      <tr><td>${escapeHtml(e.title||'')}</td><td class="dim">${escapeHtml(e.reports_to||'')}</td>
+      <td>${e.grade?`<span class="badge bmuted">${e.grade}</span>`:''}</td>
+      <td>${e.backfill_for?`<span class="badge bwarn">Backfill · ${escapeHtml(e.backfill_for)}</span>`:'<span class="badge binfo">New headcount</span>'}</td>
+      <td class="r">${e.base_salary?fmt(e.base_salary):'—'}</td>
+      <td class="r strong">${fmt(empAllIn(e))}</td></tr>`).join('')
+      : `<tr><td colspan="6" class="dim" style="padding:16px;text-align:center">No open positions.</td></tr>`;
+  }
 }
 
 // ---- TAB 3: VENDORS ------------------------------------------------------
@@ -689,23 +733,107 @@ function renderBudget(){
     `The AOP and reforecast versions (4+8, 6+6, 8+4) populate once approved budget figures are loaded to the database. The run-rate here is the interim baseline.`;
 }
 
-// ---- TAB 6: SCENARIO -----------------------------------------------------
-// Needs a model + the FP&A agent. Honest stub describing what will live here.
+// ---- TAB 6: SCENARIO (workforce) -----------------------------------------
+// Model a backfill, promotion, new req, or termination against the roster and
+// see the annualized labor-cost impact. In-memory only (does not write to DB).
+let scnAction = 'promote';   // promote | backfill | newreq | term
+let scnEmpId = null;         // selected employee/position id
+let scnDeltaPct = 10;        // promotion raise % (for promote)
+let scnNewSalary = 120000;   // for new req / backfill salary
+
 function renderScenario(){
-  const ytdActual = lineItems.reduce((s,l)=>s+ytd(l.actuals),0);
-  const runRate = lineItems.reduce((s,l)=>s+ ytd(l.actuals) + avg(l.actuals)*(12-ACTUAL_MONTHS), 0);
+  const active = employees.filter(e=>e.status==='active');
+  const opens = employees.filter(e=>e.status==='open');
+  // baseline annual labor run-rate from the roster (all-in comp of active staff)
+  const baselineComp = active.reduce((s,e)=>s+empAllIn(e),0);
+
+  // compute the modeled delta
+  let deltaLabel = 'Select a scenario', delta = 0, detail = '';
+  const emp = employees.find(e=>e.id===scnEmpId) || active[0] || opens[0];
+  if (scnAction==='promote' && emp){
+    const cur = empAllIn(emp);
+    const next = cur * (1 + scnDeltaPct/100);
+    delta = next - cur;
+    deltaLabel = `Promote ${emp.name||emp.title}`;
+    detail = `${escapeHtml(emp.name||emp.title)} at +${scnDeltaPct}%: all-in comp ${fmt(cur)} → ${fmt(next)}.`;
+  } else if (scnAction==='backfill' && emp){
+    const cur = empAllIn(emp);
+    delta = scnNewSalary*1.1 - cur;   // backfill at new salary (approx +10% loaded) less the vacated cost
+    deltaLabel = `Backfill ${emp.name||emp.title}`;
+    detail = `Replace ${escapeHtml(emp.name||emp.title)} (${fmt(cur)}) with a hire at ${fmt(scnNewSalary)} base. Net change to annual labor: ${fmt(delta)}.`;
+  } else if (scnAction==='newreq'){
+    delta = scnNewSalary * 1.1;       // new headcount, loaded
+    deltaLabel = 'New requisition';
+    detail = `Add a new position at ${fmt(scnNewSalary)} base (~${fmt(delta)} loaded annual). Increases headcount by 1.`;
+  } else if (scnAction==='term' && emp){
+    delta = -empAllIn(emp);
+    deltaLabel = `Eliminate ${emp.name||emp.title}`;
+    detail = `Remove ${escapeHtml(emp.name||emp.title)}: annual labor falls by ${fmt(Math.abs(delta))}.`;
+  }
+  const modeled = baselineComp + delta;
+
   const kpis = [
-    { l:'Full-Year Run-rate', v:fmt(runRate), s:'Current trajectory' },
-    { l:'YTD Actual', v:fmt(ytdActual), s:'Jan–May' },
-    { l:'AOP Plan', v:'Not loaded', s:'Needed for gap', cls:'fl' },
-    { l:'Gap to Plan', v:'—', s:'Needs AOP', cls:'fl' },
+    { l:'Current Labor Run-rate', v:fmt(baselineComp), s:`${active.length} active · all-in` },
+    { l:'Scenario', v:deltaLabel, s:'Modeled change', cls:'' , txt:true},
+    { l:'Annual Impact', v:(delta>=0?'+':'')+fmt(delta), s:delta>0?'Increases labor':delta<0?'Reduces labor':'No change', cls:delta>0?'dn':(delta<0?'up':'') },
+    { l:'Modeled Run-rate', v:fmt(modeled), s:'After scenario' },
   ];
   document.getElementById('scnKpis').innerHTML = kpis.map(k=>
-    `<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val ${k.cls||''}">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
-  document.getElementById('scnNote').innerHTML =
-    `<b>Scenario planning — coming next.</b> This tab will let a leader toggle cost levers (defer a hire, trim a vendor, hold T&E) to see the effect on the full-year landing versus AOP, `+
-    `and surface anomalies the FP&A agent finds (double-counted spend, duplicate vendors). It needs the AOP loaded and the levers modeled. The run-rate above is the starting point.`;
+    `<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val ${k.txt?'txt':''} ${k.cls||''}">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
+
+  // controls
+  const ctrl = document.getElementById('scnControls');
+  if (ctrl){
+    const empOptions = [...active, ...opens].map(e=>
+      `<option value="${e.id}" ${e.id===(emp&&emp.id)?'selected':''}>${escapeHtml(e.name||('OPEN · '+e.title))}${e.title&&e.name?` · ${escapeHtml(e.title)}`:''}</option>`).join('');
+    const needsEmp = (scnAction!=='newreq');
+    const needsPct = (scnAction==='promote');
+    const needsSalary = (scnAction==='backfill'||scnAction==='newreq');
+    ctrl.innerHTML = `
+      <div class="scn-field"><label>Scenario type</label>
+        <select onchange="scnSet('action',this.value)">
+          <option value="promote" ${scnAction==='promote'?'selected':''}>Promote an employee</option>
+          <option value="backfill" ${scnAction==='backfill'?'selected':''}>Backfill a position</option>
+          <option value="newreq" ${scnAction==='newreq'?'selected':''}>Open a new requisition</option>
+          <option value="term" ${scnAction==='term'?'selected':''}>Eliminate a position</option>
+        </select></div>
+      ${needsEmp?`<div class="scn-field"><label>Employee / position</label><select onchange="scnSet('emp',this.value)">${empOptions}</select></div>`:''}
+      ${needsPct?`<div class="scn-field"><label>Raise %</label><input type="number" value="${scnDeltaPct}" onchange="scnSet('pct',this.value)"></div>`:''}
+      ${needsSalary?`<div class="scn-field"><label>New base salary</label><input type="number" value="${scnNewSalary}" onchange="scnSet('salary',this.value)"></div>`:''}
+    `;
+  }
+  const det = document.getElementById('scnDetail');
+  if (det) det.innerHTML = detail ? `<b>Impact:</b> ${detail} This is an in-session model and does not change the roster or the saved forecast.` :
+    `Pick a scenario type and an employee to model the labor-cost impact.`;
 }
+
+function scnSet(field, val){
+  if (field==='action') scnAction = val;
+  else if (field==='emp') scnEmpId = Number(val);
+  else if (field==='pct') scnDeltaPct = Number(val)||0;
+  else if (field==='salary') scnNewSalary = Number(String(val).replace(/[^0-9.]/g,''))||0;
+  renderScenario();
+}
+
+// ---- EMPLOYEES (roster for Payroll + Scenario tabs) ----------------------
+let employees = [];   // roster rows for the active department selection
+async function loadEmployees(){
+  employees = [];
+  const codes = deptsForSelection(activeDept);
+  try {
+    const { data, error } = await sb.from('employees').select('*')
+      .in('department', codes).order('id',{ascending:true});
+    if (error) throw error;
+    employees = data || [];
+  } catch(e){ console.warn('employees load failed', e); employees = []; }
+}
+// loaded annual cost of an employee (salary + target bonus). Benefits handled at dept level.
+function empAllIn(e){
+  const base = Number(e.base_salary)||0;
+  const bonus = base * (Number(e.bonus_pct)||0)/100;
+  return base + bonus;
+}
+function fmtDate(d){ return d ? new Date(d+'T00:00:00').toLocaleDateString([], {month:'short',day:'numeric',year:'numeric'}) : '—'; }
 
 // ---- TAB 7: SETTLEMENTS (Legal) -----------------------------------------
 // A case/accrual tracker, editable by the legal team. Its own table, scoped
@@ -925,6 +1053,7 @@ async function switchDept(val){
   activeDept = val;
   applyActiveDept();
   await loadSettlements();
+  await loadEmployees();
   renderDeptSelector();
   updateSettlementsTabVisibility();
   renderActiveTab();
@@ -933,6 +1062,7 @@ async function switchDept(val){
 async function renderDashboard(){
   await loadAll();
   await loadSettlements();
+  await loadEmployees();
   renderDeptSelector();
   updateSettlementsTabVisibility();
   renderActiveTab();

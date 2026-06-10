@@ -142,6 +142,13 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 .set-settled .set-inp{font-style:italic;}
 .set-del{border:none;background:none;color:var(--subtle);font-size:18px;line-height:1;cursor:pointer;padding:0 6px;border-radius:5px;}
 .set-del:hover{color:var(--red);background:var(--red-bg);}
+
+/* scenario controls */
+.scn-controls{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;}
+.scn-field{display:flex;flex-direction:column;gap:5px;min-width:180px;}
+.scn-field label{font-size:11px;color:var(--muted);}
+.scn-field select,.scn-field input{border:var(--border);border-radius:7px;padding:9px 11px;font-family:inherit;font-size:12px;outline:none;background:#fff;}
+.scn-field select:focus,.scn-field input:focus{border-color:var(--accent);}
 </style>
 </head>
 <body>
@@ -241,11 +248,29 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
       <!-- TAB 2 PAYROLL -->
       <div class="panel" id="panel-payroll">
         <div class="kpi-grid" id="payKpis"></div>
+        <div class="kpi-grid" id="payHcRow"></div>
         <div class="card">
-          <div class="card-header"><div><div class="card-title">Labor Cost by Line</div><div class="card-sub">From the GL · this department, scoped</div></div><span class="badge binfo">Live</span></div>
-          <div class="card-body" style="padding:0;"><div style="overflow-x:auto"><table class="tbl" id="payTable"></table></div></div>
+          <div class="card-header"><div><div class="card-title">Recent Activity</div><div class="card-sub">Recent attrition · exits in the period</div></div><span class="badge bwarn">Attrition</span></div>
+          <div class="card-body" style="padding:0;"><div style="overflow-x:auto"><table class="tbl">
+            <thead><tr><th>ID</th><th>Name</th><th>Title</th><th>Hire Date</th><th>Term Date</th><th class="r">Base</th><th class="r">Bonus</th></tr></thead>
+            <tbody id="payActivityBody"></tbody>
+          </table></div></div>
         </div>
-        <div class="note" id="payRosterNote"></div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Current Employees</div><div class="card-sub" id="payEmpSub">Roster</div></div><span class="badge bwarn">Sample comp</span></div>
+          <div class="card-body" style="padding:0;"><div style="overflow-x:auto"><table class="tbl">
+            <thead><tr><th>ID</th><th>Name</th><th>Title</th><th>Reports To</th><th>Grade</th><th>Hire Date</th><th class="r">Base</th><th class="r">Bonus</th><th class="r">All-in</th></tr></thead>
+            <tbody id="payEmpBody"></tbody>
+          </table></div></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Open Positions</div><div class="card-sub">New headcount and backfills</div></div><span class="badge binfo">Reqs</span></div>
+          <div class="card-body" style="padding:0;"><div style="overflow-x:auto"><table class="tbl">
+            <thead><tr><th>Position</th><th>Reports To</th><th>Grade</th><th>Type</th><th class="r">Base</th><th class="r">All-in</th></tr></thead>
+            <tbody id="payOpenBody"></tbody>
+          </table></div></div>
+        </div>
+        <div class="note">Payroll, benefits and budgeted-labor figures at the top are live from the GL. The roster, comp and dates are sample placeholders so the structure is visible; they update when the HR feed is connected.</div>
       </div>
 
       <!-- TAB 3 VENDORS -->
@@ -287,7 +312,13 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
       <!-- TAB 6 SCENARIO -->
       <div class="panel" id="panel-scenario">
         <div class="kpi-grid" id="scnKpis"></div>
-        <div class="note" id="scnNote"></div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Workforce Scenario</div><div class="card-sub">Model a promotion, backfill, new hire, or elimination</div></div></div>
+          <div class="card-body">
+            <div class="scn-controls" id="scnControls"></div>
+            <div class="note" id="scnDetail" style="margin-top:14px;"></div>
+          </div>
+        </div>
       </div>
 
       <!-- TAB 7 SETTLEMENTS (Legal) -->
