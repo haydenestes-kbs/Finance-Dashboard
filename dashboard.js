@@ -24,6 +24,7 @@ let visibleDepts = [];       // every department code the signed-in user may see
 let homeDept = null;         // the department new rows are written under
 let activeDept = null;       // current selector value: a dept code, or '__ALL__' for consolidated
 let allLineItems = [];       // every visible dept's actual lines (tagged with .department)
+let isAdminUser = false;     // true if the signed-in user has all-department access
 const DEPT_NAMES = { '3020':'Financial Planning & Analysis','3040':'Information Technology','3041':'IT-Infrastructure','3042':'IT-Development','3070':'Legal','3906':'Sales & SAM','1020':'Field Ops Mgmt-LSS' };
 function deptName(code){ return DEPT_NAMES[code] || code; }
 // Department the forecast editor reads/writes. In consolidated mode there is no
@@ -275,7 +276,7 @@ async function resolveDepartments(email){
       const rows = await resp.json();
       acc = Array.isArray(rows) && rows.length ? rows[0] : null;
     }
-    if (acc) homeDept = acc.is_admin ? '3020' : acc.department;
+    if (acc) { homeDept = acc.is_admin ? '3020' : acc.department; isAdminUser = !!acc.is_admin; }
   } catch(e){ console.warn('user_access lookup failed', e); }
   if (!visibleDepts.length) visibleDepts = ['3020'];
   if (!homeDept) homeDept = '3020';
@@ -1155,7 +1156,8 @@ function renderDeptSelector(){
   const depts = drillDepts();
   let opts = '';
   if (depts.length > 1){
-    opts += `<option value="__ALL__">Consolidated · all my departments</option>`;
+    const consolLabel = isAdminUser ? 'Consolidated · all departments' : 'Consolidated · all my departments';
+    opts += `<option value="__ALL__">${consolLabel}</option>`;
     depts.forEach(d=> opts += `<option value="${d}">${d} · ${deptName(d)}</option>`);
   } else {
     const d = depts[0] || homeDept;
@@ -1169,7 +1171,8 @@ function renderDeptSelector(){
 
 function updateDeptHeading(){
   const isAll = activeDept === '__ALL__';
-  const title = isAll ? 'IT Consolidated' : `${activeDept} · ${deptName(activeDept)}`;
+  const consolTitle = isAdminUser ? 'All Departments · Consolidated' : 'Consolidated View';
+  const title = isAll ? consolTitle : `${activeDept} · ${deptName(activeDept)}`;
   const tEl = document.querySelector('.page-title'); if (tEl) tEl.textContent = title;
   // In consolidated mode the line-level forecast editor is not meaningful; show a notice.
   const fcNote = document.getElementById('fcConsolidatedNote');
