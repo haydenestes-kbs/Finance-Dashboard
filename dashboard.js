@@ -25,8 +25,16 @@ let homeDept = null;         // the department new rows are written under
 let activeDept = null;       // current selector value: a dept code, or '__ALL__' for consolidated
 let allLineItems = [];       // every visible dept's actual lines (tagged with .department)
 let isAdminUser = false;     // true if the signed-in user has all-department access
-const DEPT_NAMES = { '3020':'Financial Planning & Analysis','3040':'Information Technology','3041':'IT-Infrastructure','3042':'IT-Development','3070':'Legal','3906':'Sales & SAM','1020':'Field Ops Mgmt-LSS' };
-function deptName(code){ return DEPT_NAMES[code] || code; }
+// Department metadata, loaded from shared.departments at login.
+// DEPT_META[code] = { name, parent }. Falls back to a small static map if the
+// load fails, so the dashboard still renders.
+let DEPT_META = {};
+const DEPT_NAMES_FALLBACK = { '3020':'Finance','3040':'Information Technology','3041':'IT-Infrastructure','3042':'IT-Development','3070':'Legal','1020':'Field Ops Mgmt-LSS' };
+function deptName(code){ return (DEPT_META[code] && DEPT_META[code].name) || DEPT_NAMES_FALLBACK[code] || code; }
+function deptParent(code){ return DEPT_META[code] ? DEPT_META[code].parent : null; }
+function isTopLevel(code){ return !deptParent(code); }
+// direct children of a department (one level down)
+function childrenOf(code){ return Object.keys(DEPT_META).filter(c => DEPT_META[c].parent === code); }
 // Display identity per known user (name + title). Falls back to the email prefix.
 const USER_IDENTITY = {
   'bfremont@kbs-services.com':      { name:'Ben Fremont',     title:'VP, FP&A' },
@@ -212,39 +220,63 @@ async function loadActuals(){
   applyActiveDept();   // sets lineItems from allLineItems based on activeDept
 }
 
-// Which department codes are "children" we can drill into (everything except the
-// synthetic consolidated bucket). Used to build the selector.
-function drillDepts(){
-  // departments that actually have data loaded
-  const set = Array.from(new Set(allLineItems.map(l=>l.department)));
-  set.sort();
-  return set;
+// The set of department codes the user may see (from access), sorted.
+function visibleSet(){ return (visibleDepts || []).slice().sort(); }
+
+// Which actual department codes a dropdown selection covers:
+//  - '__ALL__'      -> every visible department
+//  - a parent code  -> that code plus its visible children
+//  - a leaf code    -> just that code
+function deptsForSelection(sel){
+  const vis = new Set(visibleSet());
+  if (sel === '__ALL__') return Array.from(vis);
+  const kids = childrenOf(sel).filter(c => vis.has(c));
+  const out = [sel, ...kids].filter(c => vis.has(c));
+  return out.length ? out : [sel];
 }
 
-// Rebuild lineItems from allLineItems for the current activeDept.
-// - single dept code: just that department's lines (full detail)
-// - '__ALL__' consolidated: one synthetic line per category (rollup), no vendor detail
-function applyActiveDept(){
-  const depts = drillDepts();
-  if (!activeDept){
-    // default: consolidated if more than one dept, else the single dept
-    activeDept = depts.length > 1 ? '__ALL__' : (depts[0] || homeDept);
+// Build the dropdown options appropriate to the user.
+//  - admin: each top-level (no-parent) visible department, plus a top "All" rollup
+//  - department head whose home dept has children: Consolidated + each child
+//  - leaf head: just their own department
+function selectorOptions(){
+  const vis = visibleSet();
+  if (isAdminUser){
+    const tops = vis.filter(isTopLevel);
+    return { showAll:true, items: tops };
   }
-  if (activeDept === '__ALL__'){
-    // category rollup across all visible depts
+  // non-admin: anchored on their home department
+  const kids = childrenOf(homeDept).filter(c => vis.includes(c));
+  if (kids.length){
+    return { showAll:true, items: [homeDept, ...kids] };  // parent + its sub-departments
+  }
+  return { showAll:false, items: [homeDept] };             // leaf department
+}
+
+// Rebuild lineItems from allLineItems for the current activeDept selection.
+function applyActiveDept(){
+  if (!activeDept){
+    const opt = selectorOptions();
+    activeDept = opt.showAll ? '__ALL__' : (opt.items[0] || homeDept);
+  }
+  const codes = deptsForSelection(activeDept);
+  const rows = allLineItems.filter(l => codes.includes(l.department));
+  const single = (activeDept !== '__ALL__') && childrenOf(activeDept).length === 0;
+
+  if (!single){
+    // consolidated: one synthetic line per category across the selected codes
     const byCat = {};
-    allLineItems.forEach(l=>{
+    rows.forEach(l=>{
       const c = byCat[l.cat] || (byCat[l.cat] = [0,0,0,0,0]);
       l.actuals.forEach((v,i)=> c[i]+=v);
     });
-    lineItems = Object.keys(byCat).map((cat,idx)=>({
+    lineItems = Object.keys(byCat).map(cat=>({
       id:`roll_${cat}`, label:(catMeta[cat]?catMeta[cat].label:cat), cat, vendor:'Consolidated',
       actuals:byCat[cat]
     }));
   } else {
-    lineItems = allLineItems.filter(l=>l.department===activeDept).map(l=>({
-      id:l.id, label:l.label, cat:l.cat, vendor:l.vendor, actuals:l.actuals.slice()
-    }));
+    // single leaf department: full line detail
+    lineItems = rows.map(l=>({ id:l.id, label:l.label, cat:l.cat, vendor:l.vendor, actuals:l.actuals.slice() }));
   }
   // recompute benefits ratio from whatever is in view
   const sal = (lineItems.find(l=>l.id==='salary'||l.id==='roll_payroll')||{actuals:[0]}).actuals.reduce((a,b)=>a+b,0);
@@ -307,6 +339,29 @@ async function resolveDepartments(email){
   } catch(e){ console.warn('user_access lookup failed', e); }
   if (!visibleDepts.length) visibleDepts = ['3020'];
   if (!homeDept) homeDept = '3020';
+  await loadDeptHierarchy();
+}
+
+// Load code/name/parent for every department from shared.departments so the
+// dropdown can show the right level (top-level for admins, subtree for heads).
+async function loadDeptHierarchy(){
+  DEPT_META = {};
+  try {
+    let rows = null;
+    if (typeof sb.schema === 'function') {
+      const { data } = await sb.schema('shared').from('departments')
+        .select('code, name, parent_code, is_active');
+      rows = data;
+    } else {
+      const resp = await fetch(
+        `${SUPABASE_URL}/rest/v1/departments?select=code,name,parent_code,is_active`,
+        { headers: { apikey: SUPABASE_ANON_KEY,
+                     Authorization: `Bearer ${(await sb.auth.getSession()).data.session.access_token}`,
+                     'Accept-Profile': 'shared' } });
+      rows = await resp.json();
+    }
+    (rows || []).forEach(r=>{ if (r.is_active !== false) DEPT_META[r.code] = { name:r.name, parent:r.parent_code || null }; });
+  } catch(e){ console.warn('department hierarchy load failed', e); }
 }
 
 async function loadAll(){
@@ -672,18 +727,28 @@ function renderActiveTab(){
   }
 }
 
-// Department selector (consolidated + drill), same model as before.
+// Department selector, hierarchy-aware.
+//  admin: "All Departments" + each top-level department
+//  multi-child head: their parent (consolidated) + each sub-department
+//  leaf head: just their own department
 function renderDeptSelector(){
   const sel = document.getElementById('deptSelect');
   if (!sel) return;
-  const depts = drillDepts();
+  const opt = selectorOptions();
   let opts = '';
-  if (depts.length > 1){
-    const consolLabel = isAdminUser ? 'Consolidated · all departments' : 'Consolidated · all my departments';
-    opts += `<option value="__ALL__">${consolLabel}</option>`;
-    depts.forEach(d=> opts += `<option value="${d}">${d} · ${deptName(d)}</option>`);
+  if (isAdminUser){
+    opts += `<option value="__ALL__">All Departments · Consolidated</option>`;
+    opt.items.forEach(d=>{
+      const tag = childrenOf(d).length ? ' (rollup)' : '';
+      opts += `<option value="${d}">${d} · ${deptName(d)}${tag}</option>`;
+    });
+  } else if (opt.showAll){
+    // parent + children: parent option is the consolidated rollup
+    const parent = opt.items[0];
+    opts += `<option value="${parent}">${deptName(parent)} · Consolidated</option>`;
+    opt.items.slice(1).forEach(d=> opts += `<option value="${d}">${d} · ${deptName(d)}</option>`);
   } else {
-    const d = depts[0] || homeDept;
+    const d = opt.items[0] || homeDept;
     opts = `<option value="${d}">${d} · ${deptName(d)}</option>`;
   }
   sel.innerHTML = opts;
@@ -691,17 +756,26 @@ function renderDeptSelector(){
   updateHeadings();
 }
 
+// is the current selection a consolidated/rollup view (vs a single leaf dept)?
+function selectionIsRollup(){
+  if (activeDept === '__ALL__') return true;
+  return childrenOf(activeDept).length > 0;
+}
+
 function updateHeadings(){
-  const isAll = activeDept === '__ALL__';
-  const scopeName = isAll ? (isAdminUser ? 'All Departments · Consolidated' : 'Consolidated View') : `${activeDept} · ${deptName(activeDept)}`;
-  // page title shows tab name; subtitle shows scope + identity
+  const rollup = selectionIsRollup();
+  let scopeName;
+  if (activeDept === '__ALL__') scopeName = isAdminUser ? 'All Departments · Consolidated' : 'Consolidated View';
+  else if (rollup) scopeName = `${deptName(activeDept)} · Consolidated`;
+  else scopeName = `${activeDept} · ${deptName(activeDept)}`;
   const t = TAB_TITLES[activeTab] || ['',''];
   const titleEl = document.getElementById('pageTitle'); if (titleEl) titleEl.textContent = t[0];
   const subEl = document.getElementById('pageSub');
   if (subEl) subEl.textContent = `${scopeName} · ${userIdentity.name}${userIdentity.title?', '+userIdentity.title:''} · May 2026 close`;
-  // sidebar department label
   const navLabel = document.getElementById('navDeptLabel');
-  if (navLabel) navLabel.textContent = isAll ? (isAdminUser?'All Departments':'My Departments') : deptName(activeDept);
+  if (navLabel) navLabel.textContent = (activeDept === '__ALL__')
+    ? (isAdminUser?'All Departments':'My Departments')
+    : deptName(activeDept);
   const navRev = document.getElementById('navReviewer');
   if (navRev) navRev.textContent = `${shortName(userIdentity.name)}${userIdentity.title?', '+userIdentity.title:''}`;
 }
