@@ -657,10 +657,13 @@ function renderVendors(){
     destroyChart('venBar');
     return;
   }
-  let h = `<thead><tr><th>Vendor</th><th>Category</th><th class="r">May</th><th class="r">YTD</th><th class="r">Run-rate</th></tr></thead><tbody>`;
+  const monthHdrs = months.slice(0,ACTUAL_MONTHS).map(m=>`<th class="r">${m}</th>`).join('');
+  let h = `<thead><tr><th>Vendor</th><th>Category</th>${monthHdrs}<th class="r">YTD</th><th class="r">Run-rate</th></tr></thead><tbody>`;
   vlines.forEach(l=>{ const y=ytd(l.actuals);
-    h += `<tr><td class="strong">${l.vendor}</td><td class="dim">${catMeta[l.cat]?catMeta[l.cat].label:l.cat}</td><td class="r">${fmt(l.actuals[CURRENT_MONTH_IDX])}</td><td class="r strong">${fmt(y)}</td><td class="r dim">${fmt(y/ACTUAL_MONTHS*12)}</td></tr>`; });
-  h += `</tbody><tfoot><tr><td>Total</td><td></td><td class="r">${fmt(mtd)}</td><td class="r">${fmt(vYtd)}</td><td class="r">${fmt(vYtd/ACTUAL_MONTHS*12)}</td></tr></tfoot>`;
+    const monthCells = l.actuals.map(v=>`<td class="r">${v?fmt(v):'<span class="dim">–</span>'}</td>`).join('');
+    h += `<tr><td class="strong">${l.vendor}</td><td class="dim">${catMeta[l.cat]?catMeta[l.cat].label:l.cat}</td>${monthCells}<td class="r strong">${fmt(y)}</td><td class="r dim">${fmt(y/ACTUAL_MONTHS*12)}</td></tr>`; });
+  const monthTotals = months.slice(0,ACTUAL_MONTHS).map((m,i)=>`<td class="r">${fmt(vlines.reduce((s,l)=>s+l.actuals[i],0))}</td>`).join('');
+  h += `</tbody><tfoot><tr><td>Total</td><td></td>${monthTotals}<td class="r">${fmt(vYtd)}</td><td class="r">${fmt(vYtd/ACTUAL_MONTHS*12)}</td></tr></tfoot>`;
   document.getElementById('venTable').innerHTML = h;
 
   // top vendors bar
@@ -734,84 +737,206 @@ function renderBudget(){
 }
 
 // ---- TAB 6: SCENARIO (workforce) -----------------------------------------
-// Model a backfill, promotion, new req, or termination against the roster and
-// see the annualized labor-cost impact. In-memory only (does not write to DB).
+// Model workforce or vendor changes and see the monthly + annual impact.
+// In-memory only (does not write to DB).
+let scnMode = 'workforce';   // workforce | vendor
 let scnAction = 'promote';   // promote | backfill | newreq | term
 let scnEmpId = null;         // selected employee/position id
 let scnDeltaPct = 10;        // promotion raise % (for promote)
 let scnNewSalary = 120000;   // for new req / backfill salary
+let scnDate = '2026-07-01';  // hire / promotion / term effective date
+// vendor scenario
+let scnVendorId = null;      // selected vendor line id
+let scnVendorAction = 'cut'; // cut | increase | remove
+let scnVendorPct = 10;       // cut/increase percent
+
+const MONTH_FIRSTS = months.map((m,i)=>`2026-${String(i+1).padStart(2,'0')}-01`);
+// month index (0-11) that an effective date falls in; clamped to the year
+function effectiveMonthIdx(dateStr){
+  if (!dateStr) return ACTUAL_MONTHS; // default June
+  const d = new Date(dateStr+'T00:00:00');
+  const idx = d.getMonth();
+  return isNaN(idx) ? ACTUAL_MONTHS : Math.max(0, Math.min(11, idx));
+}
+// number of months from the effective month through December (inclusive)
+function monthsRemaining(dateStr){ return 12 - effectiveMonthIdx(dateStr); }
+
+// current monthly run-rate series for the active selection:
+// actuals Jan-May, then YTD-average for Jun-Dec
+function currentMonthlySeries(){
+  return months.map((m,i)=> i<ACTUAL_MONTHS
+    ? lineItems.reduce((s,l)=>s+l.actuals[i],0)
+    : lineItems.reduce((s,l)=>s+avg(l.actuals),0));
+}
+// budget baseline series (derived from run-rate; flat YTD-average each month)
+function budgetMonthlySeries(){
+  const monthlyAvg = lineItems.reduce((s,l)=>s+avg(l.actuals),0);
+  return months.map(()=> monthlyAvg);
+}
+
+// The scenario's monthly delta series (added to the current run-rate).
+// Annual change is spread evenly across the affected months from the effective
+// date forward, so an October change only moves Oct-Dec.
+function scenarioMonthlySeries(annualDelta, dateStr){
+  const startIdx = effectiveMonthIdx(dateStr);
+  const perMonth = annualDelta / 12;        // annualized monthly rate
+  return months.map((m,i)=> i>=startIdx ? perMonth : 0);
+}
 
 function renderScenario(){
   const active = employees.filter(e=>e.status==='active');
   const opens = employees.filter(e=>e.status==='open');
-  // baseline annual labor run-rate from the roster (all-in comp of active staff)
   const baselineComp = active.reduce((s,e)=>s+empAllIn(e),0);
 
-  // compute the modeled delta
-  let deltaLabel = 'Select a scenario', delta = 0, detail = '';
-  const emp = employees.find(e=>e.id===scnEmpId) || active[0] || opens[0];
-  if (scnAction==='promote' && emp){
-    const cur = empAllIn(emp);
-    const next = cur * (1 + scnDeltaPct/100);
-    delta = next - cur;
-    deltaLabel = `Promote ${emp.name||emp.title}`;
-    detail = `${escapeHtml(emp.name||emp.title)} at +${scnDeltaPct}%: all-in comp ${fmt(cur)} → ${fmt(next)}.`;
-  } else if (scnAction==='backfill' && emp){
-    const cur = empAllIn(emp);
-    delta = scnNewSalary*1.1 - cur;   // backfill at new salary (approx +10% loaded) less the vacated cost
-    deltaLabel = `Backfill ${emp.name||emp.title}`;
-    detail = `Replace ${escapeHtml(emp.name||emp.title)} (${fmt(cur)}) with a hire at ${fmt(scnNewSalary)} base. Net change to annual labor: ${fmt(delta)}.`;
-  } else if (scnAction==='newreq'){
-    delta = scnNewSalary * 1.1;       // new headcount, loaded
-    deltaLabel = 'New requisition';
-    detail = `Add a new position at ${fmt(scnNewSalary)} base (~${fmt(delta)} loaded annual). Increases headcount by 1.`;
-  } else if (scnAction==='term' && emp){
-    delta = -empAllIn(emp);
-    deltaLabel = `Eliminate ${emp.name||emp.title}`;
-    detail = `Remove ${escapeHtml(emp.name||emp.title)}: annual labor falls by ${fmt(Math.abs(delta))}.`;
+  // ---- compute annual delta + label + detail for the active scenario ----
+  let deltaLabel='Select a scenario', annualDelta=0, detail='', dateLabel='';
+  if (scnMode==='workforce'){
+    const emp = employees.find(e=>e.id===scnEmpId) || active[0] || opens[0];
+    const rem = monthsRemaining(scnDate);
+    const remNote = `Effective ${fmtDate(scnDate)} → ${rem} month${rem===1?'':'s'} this year.`;
+    if (scnAction==='promote' && emp){
+      const cur=empAllIn(emp); annualDelta = cur*(scnDeltaPct/100);
+      deltaLabel = `Promote ${emp.name||emp.title}`;
+      dateLabel='Promotion date';
+      detail = `${escapeHtml(emp.name||emp.title)} +${scnDeltaPct}% (${fmt(cur)} → ${fmt(cur*(1+scnDeltaPct/100))} all-in). ${remNote}`;
+    } else if (scnAction==='backfill' && emp){
+      const cur=empAllIn(emp); annualDelta = scnNewSalary*1.1 - cur;
+      deltaLabel = `Backfill ${emp.name||emp.title}`;
+      dateLabel='Hire date';
+      detail = `Replace ${escapeHtml(emp.name||emp.title)} (${fmt(cur)}) with a hire at ${fmt(scnNewSalary)} base. ${remNote}`;
+    } else if (scnAction==='newreq'){
+      annualDelta = scnNewSalary*1.1;
+      deltaLabel = 'New requisition';
+      dateLabel='Hire date';
+      detail = `New position at ${fmt(scnNewSalary)} base (~${fmt(annualDelta)} loaded annual). ${remNote}`;
+    } else if (scnAction==='term' && emp){
+      annualDelta = -empAllIn(emp);
+      deltaLabel = `Eliminate ${emp.name||emp.title}`;
+      dateLabel='Term date';
+      detail = `Remove ${escapeHtml(emp.name||emp.title)}: ${fmt(Math.abs(annualDelta))}/yr. ${remNote}`;
+    }
+  } else { // vendor
+    const vlines = lineItems.filter(l=> l.vendor && l.vendor!=='Employees' && l.vendor!=='Consolidated' && l.cat!=='payroll' && l.cat!=='benefits')
+      .sort((a,b)=>ytd(b.actuals)-ytd(a.actuals));
+    const v = vlines.find(l=>l.id===scnVendorId) || vlines[0];
+    const rem = monthsRemaining(scnDate);
+    const remNote = `Effective ${fmtDate(scnDate)} → ${rem} month${rem===1?'':'s'} this year.`;
+    if (v){
+      const annualRunRate = avg(v.actuals)*12;  // this vendor's annualized spend
+      if (scnVendorAction==='cut'){
+        annualDelta = -annualRunRate*(scnVendorPct/100);
+        deltaLabel = `Cut ${v.vendor} ${scnVendorPct}%`;
+        detail = `Reduce ${escapeHtml(v.vendor)} (run-rate ${fmt(annualRunRate)}/yr) by ${scnVendorPct}%. ${remNote}`;
+      } else if (scnVendorAction==='increase'){
+        annualDelta = annualRunRate*(scnVendorPct/100);
+        deltaLabel = `Increase ${v.vendor} ${scnVendorPct}%`;
+        detail = `Increase ${escapeHtml(v.vendor)} (run-rate ${fmt(annualRunRate)}/yr) by ${scnVendorPct}%. ${remNote}`;
+      } else { // remove
+        annualDelta = -annualRunRate;
+        deltaLabel = `Remove ${v.vendor}`;
+        detail = `Eliminate ${escapeHtml(v.vendor)} entirely: ${fmt(annualRunRate)}/yr. ${remNote}`;
+      }
+    }
   }
-  const modeled = baselineComp + delta;
+
+  // ---- the three monthly series for the chart ----
+  const curSeries = currentMonthlySeries();
+  const budSeries = budgetMonthlySeries();
+  const deltaSeries = scenarioMonthlySeries(annualDelta, scnDate);
+  const scnSeries = curSeries.map((v,i)=> v + deltaSeries[i]);
+  // annual (full-year) figures
+  const curAnnual = curSeries.reduce((a,b)=>a+b,0);
+  const scnAnnual = scnSeries.reduce((a,b)=>a+b,0);
+  const yearImpact = scnAnnual - curAnnual;  // prorated impact this year
 
   const kpis = [
-    { l:'Current Labor Run-rate', v:fmt(baselineComp), s:`${active.length} active · all-in` },
-    { l:'Scenario', v:deltaLabel, s:'Modeled change', cls:'' , txt:true},
-    { l:'Annual Impact', v:(delta>=0?'+':'')+fmt(delta), s:delta>0?'Increases labor':delta<0?'Reduces labor':'No change', cls:delta>0?'dn':(delta<0?'up':'') },
-    { l:'Modeled Run-rate', v:fmt(modeled), s:'After scenario' },
+    { l:'Current Run-rate (FY)', v:fmt(curAnnual), s:'Full-year trajectory' },
+    { l:'Scenario', v:deltaLabel, s:'Modeled change', txt:true },
+    { l:'Impact This Year', v:(yearImpact>=0?'+':'')+fmt(yearImpact), s:'Prorated from effective date', cls:yearImpact>0?'dn':(yearImpact<0?'up':'') },
+    { l:'Modeled Run-rate (FY)', v:fmt(scnAnnual), s:'After scenario' },
   ];
   document.getElementById('scnKpis').innerHTML = kpis.map(k=>
     `<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val ${k.txt?'txt':''} ${k.cls||''}">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
 
-  // controls
+  // ---- three-line chart ----
+  destroyChart('scnChart');
+  const cv = document.getElementById('scnChart');
+  if (cv){
+    charts.scnChart = new Chart(cv, { type:'line',
+      data:{ labels:months.map(m=>m+" '26"), datasets:[
+        { label:'Budget (baseline)', data:budSeries, borderColor:'#94A3B8', borderWidth:2, borderDash:[5,4], pointRadius:0, fill:false, tension:.2 },
+        { label:'Current run-rate', data:curSeries, borderColor:'#1A56A0', backgroundColor:'rgba(26,86,160,0.06)', borderWidth:2.5, pointRadius:3, pointBackgroundColor:'#1A56A0', fill:false, tension:.2 },
+        { label:'Scenario', data:scnSeries, borderColor:'#1A7A4A', borderWidth:2.5, borderDash:[6,3], pointRadius:3, pointBackgroundColor:'#1A7A4A', fill:false, tension:.2 },
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, padding:14, font:{size:11} } }, tooltip:{ callbacks:{ label:c=>`${c.dataset.label}: ${fmt(c.parsed.y)}` } } },
+        scales:{ y:{ ticks:{ callback:v=>fmtK(v) }, grid:{color:'#F1F5F9'} }, x:{ grid:{display:false} } } } });
+  }
+
+  // ---- controls ----
   const ctrl = document.getElementById('scnControls');
   if (ctrl){
-    const empOptions = [...active, ...opens].map(e=>
-      `<option value="${e.id}" ${e.id===(emp&&emp.id)?'selected':''}>${escapeHtml(e.name||('OPEN · '+e.title))}${e.title&&e.name?` · ${escapeHtml(e.title)}`:''}</option>`).join('');
-    const needsEmp = (scnAction!=='newreq');
-    const needsPct = (scnAction==='promote');
-    const needsSalary = (scnAction==='backfill'||scnAction==='newreq');
-    ctrl.innerHTML = `
-      <div class="scn-field"><label>Scenario type</label>
-        <select onchange="scnSet('action',this.value)">
-          <option value="promote" ${scnAction==='promote'?'selected':''}>Promote an employee</option>
-          <option value="backfill" ${scnAction==='backfill'?'selected':''}>Backfill a position</option>
-          <option value="newreq" ${scnAction==='newreq'?'selected':''}>Open a new requisition</option>
-          <option value="term" ${scnAction==='term'?'selected':''}>Eliminate a position</option>
-        </select></div>
-      ${needsEmp?`<div class="scn-field"><label>Employee / position</label><select onchange="scnSet('emp',this.value)">${empOptions}</select></div>`:''}
-      ${needsPct?`<div class="scn-field"><label>Raise %</label><input type="number" value="${scnDeltaPct}" onchange="scnSet('pct',this.value)"></div>`:''}
-      ${needsSalary?`<div class="scn-field"><label>New base salary</label><input type="number" value="${scnNewSalary}" onchange="scnSet('salary',this.value)"></div>`:''}
-    `;
+    const modeToggle = `
+      <div class="scn-field"><label>Scenario area</label>
+        <select onchange="scnSet('mode',this.value)">
+          <option value="workforce" ${scnMode==='workforce'?'selected':''}>Workforce</option>
+          <option value="vendor" ${scnMode==='vendor'?'selected':''}>Vendor</option>
+        </select></div>`;
+    let body='';
+    if (scnMode==='workforce'){
+      const empOptions = [...active, ...opens].map(e=>{
+        const sel = employees.find(x=>x.id===scnEmpId) || active[0] || opens[0];
+        return `<option value="${e.id}" ${e.id===(sel&&sel.id)?'selected':''}>${escapeHtml(e.name||('OPEN · '+e.title))}${e.title&&e.name?` · ${escapeHtml(e.title)}`:''}</option>`;
+      }).join('');
+      const needsEmp=(scnAction!=='newreq'), needsPct=(scnAction==='promote'), needsSalary=(scnAction==='backfill'||scnAction==='newreq');
+      const dlabel = scnAction==='promote'?'Promotion date':scnAction==='term'?'Term date':'Hire date';
+      body = `
+        <div class="scn-field"><label>Scenario type</label>
+          <select onchange="scnSet('action',this.value)">
+            <option value="promote" ${scnAction==='promote'?'selected':''}>Promote an employee</option>
+            <option value="backfill" ${scnAction==='backfill'?'selected':''}>Backfill a position</option>
+            <option value="newreq" ${scnAction==='newreq'?'selected':''}>Open a new requisition</option>
+            <option value="term" ${scnAction==='term'?'selected':''}>Eliminate a position</option>
+          </select></div>
+        ${needsEmp?`<div class="scn-field"><label>Employee / position</label><select onchange="scnSet('emp',this.value)">${empOptions}</select></div>`:''}
+        ${needsPct?`<div class="scn-field"><label>Raise %</label><input type="number" value="${scnDeltaPct}" onchange="scnSet('pct',this.value)"></div>`:''}
+        ${needsSalary?`<div class="scn-field"><label>New base salary</label><input type="number" value="${scnNewSalary}" onchange="scnSet('salary',this.value)"></div>`:''}
+        <div class="scn-field"><label>${dlabel}</label><input type="date" value="${scnDate}" onchange="scnSet('date',this.value)"></div>`;
+    } else {
+      const vlines = lineItems.filter(l=> l.vendor && l.vendor!=='Employees' && l.vendor!=='Consolidated' && l.cat!=='payroll' && l.cat!=='benefits')
+        .sort((a,b)=>ytd(b.actuals)-ytd(a.actuals));
+      const selV = vlines.find(l=>l.id===scnVendorId) || vlines[0];
+      const vOptions = vlines.map(l=>`<option value="${l.id}" ${l.id===(selV&&selV.id)?'selected':''}>${escapeHtml(l.vendor)} (${fmt(ytd(l.actuals))} YTD)</option>`).join('');
+      const needsPct = (scnVendorAction!=='remove');
+      body = `
+        <div class="scn-field"><label>Vendor</label><select onchange="scnSet('vendor',this.value)">${vOptions||'<option>No vendors</option>'}</select></div>
+        <div class="scn-field"><label>Change</label>
+          <select onchange="scnSet('vaction',this.value)">
+            <option value="cut" ${scnVendorAction==='cut'?'selected':''}>Cut spend</option>
+            <option value="increase" ${scnVendorAction==='increase'?'selected':''}>Increase spend</option>
+            <option value="remove" ${scnVendorAction==='remove'?'selected':''}>Remove vendor</option>
+          </select></div>
+        ${needsPct?`<div class="scn-field"><label>Percent</label><input type="number" value="${scnVendorPct}" onchange="scnSet('vpct',this.value)"></div>`:''}
+        <div class="scn-field"><label>Effective date</label><input type="date" value="${scnDate}" onchange="scnSet('date',this.value)"></div>`;
+    }
+    ctrl.innerHTML = modeToggle + body;
   }
   const det = document.getElementById('scnDetail');
-  if (det) det.innerHTML = detail ? `<b>Impact:</b> ${detail} This is an in-session model and does not change the roster or the saved forecast.` :
-    `Pick a scenario type and an employee to model the labor-cost impact.`;
+  if (det) det.innerHTML = detail
+    ? `<b>Impact:</b> ${detail} In-session model only; it does not change saved data.`
+    : `Pick a scenario to model the impact.`;
 }
 
 function scnSet(field, val){
-  if (field==='action') scnAction = val;
+  if (field==='mode') scnMode = val;
+  else if (field==='action') scnAction = val;
   else if (field==='emp') scnEmpId = Number(val);
   else if (field==='pct') scnDeltaPct = Number(val)||0;
   else if (field==='salary') scnNewSalary = Number(String(val).replace(/[^0-9.]/g,''))||0;
+  else if (field==='date') scnDate = val;
+  else if (field==='vendor') scnVendorId = val;
+  else if (field==='vaction') scnVendorAction = val;
+  else if (field==='vpct') scnVendorPct = Number(val)||0;
   renderScenario();
 }
 
